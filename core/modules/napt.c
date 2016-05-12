@@ -116,6 +116,10 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 	uint16_t *dst_port; 
 	
 	for (int i = 0; i < batch->cnt; i++) {
+
+    		// get the direction of the flow
+		direction[i] = get_igate();
+
 		eth = (struct ether_hdr *)snb_head_data(batch->pkts[i]);
 		
 		// act only on IPv4 packets
@@ -137,9 +141,7 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		}
 		else
 		  continue;
-
-		// get the direction of the flow
-		direction[i] = get_igate();
+		
 		struct napt_priv *priv = get_priv(m);
 		struct napt_mapping_entry *entry;
 		if (direction[i] == OUTBOUND) {
