@@ -114,6 +114,7 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 	struct udp_hdr *udp;
 	uint16_t *src_port;
 	uint16_t *dst_port; 
+	uint16_t ether_type;
 	
 	for (int i = 0; i < batch->cnt; i++) {
 
@@ -121,9 +122,11 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		direction[i] = get_igate();
 
 		eth = (struct ether_hdr *)snb_head_data(batch->pkts[i]);
+
+		ether_type = ntohs(eth->ether_type);
 		
 		// act only on IPv4 packets
-		if ( eth->ether_type != ETHER_TYPE_IPv4 )
+		if ( ether_type != ETHER_TYPE_IPv4 )
 		  continue;
 
 		ip = (struct ipv4_hdr *)(eth + 1);
