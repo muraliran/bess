@@ -1,7 +1,6 @@
 #include <assert.h>
 
-#include <rte_malloc.h>
-
+#include "opts.h"
 #include "log.h"
 #include "module.h"
 #include "task.h"
@@ -12,9 +11,9 @@ struct task *task_create(struct module *m, void *arg)
 {
 	struct task *t;
 
-	t = rte_zmalloc("task", sizeof(*t), 0);
+	t = mem_alloc(sizeof(*t));
 	if (!t)
-		oom_crash();
+		return NULL;
 	
 	cdlist_item_init(&t->tc);
 	cdlist_add_tail(&all_tasks, &t->all_tasks);
@@ -32,7 +31,7 @@ void task_destroy(struct task *t)
 		task_detach(t);
 
 	cdlist_del(&t->all_tasks);
-	rte_free(t);
+	mem_free(t);
 }
 
 void task_attach(struct task *t, struct tc *c)

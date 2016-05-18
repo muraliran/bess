@@ -1,4 +1,5 @@
 #include "../module.h"
+#include "../time.h"
 #include "../utils/random.h"
 
 #define MAX_VARS		16
@@ -6,7 +7,7 @@
 struct rupdate_priv {
 	int num_vars;
 	struct var {
-		uint32_t mask;
+		uint32_t mask;		/* bits with 1 won't be updated */
 		uint32_t min;
 		uint32_t range;		/* == max - min + 1 */
 		int16_t offset;
@@ -109,7 +110,7 @@ static struct snobj *rupdate_init(struct module *m, struct snobj *arg)
 {
 	struct rupdate_priv *priv = get_priv(m);
 
-	priv->seed = 1;
+	priv->seed = rdtsc();
 
 	if (arg)
 		return command_add(m, NULL, arg);
