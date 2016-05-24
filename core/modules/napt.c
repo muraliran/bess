@@ -15,7 +15,6 @@
 #define MAX_MAP_ENTRIES 1
 
 struct napt_mapping_entry {
-  struct ether_addr in_eth;
   uint32_t in_ip;
   uint32_t out_ip;
   uint16_t in_port;
@@ -24,18 +23,10 @@ struct napt_mapping_entry {
 };
 
 struct napt_priv {
-  struct ether_addr nat_eth;
   uint32_t nat_ip;
   struct napt_mapping_entry entry;
 };
 
-
-static void log_info_eth(struct ether_addr eth)
-{
-	char buf[ETHER_ADDR_FMT_SIZE];
-	ether_format_addr(buf, ETHER_ADDR_FMT_SIZE, &eth);
-	log_info("%s\n", buf);
-}
 
 static void log_info_ip(uint32_t ip)
 {
@@ -55,17 +46,8 @@ static struct snobj *napt_init(struct module *m, struct snobj *arg)
 
 	log_info("NAPT:napt_init\n");
  	
-	// hardcode the NAT address to 00:00:00:00:00:04
-	for (int i = 0; i < 5; i++) 
-	  priv->nat_eth.addr_bytes[i] = 0x00;
- 	priv->nat_eth.addr_bytes[5] = 0x04;
-
 	// hardcode the nat IP
 	priv->nat_ip = IPv4(192, 168, 10, 4);
-
-	for (int i = 0; i < 5; i++) 
-	  priv->entry.in_eth.addr_bytes[i] = 0x00;
-	priv->entry.in_eth.addr_bytes[5] = 0x02;
 	priv->entry.in_ip  = IPv4(192, 168, 10, 2);
 	priv->entry.out_ip = IPv4(192, 168, 10, 3);
 	priv->entry.in_port = 26001;
@@ -78,13 +60,10 @@ static struct snobj *napt_init(struct module *m, struct snobj *arg)
 	log_info("IN:  ");
 	log_info_ip(priv->entry.in_ip);
 	log_info(":%d  /  ", priv->entry.in_port);
-	log_info_eth(priv->entry.in_eth);
 	
 	log_info("NAT: ");
 	log_info_ip(priv->nat_ip);
 	log_info(":%d  /  ", priv->entry.nat_port);
-	log_info_eth(priv->nat_eth);
-
 	log_info("OUT: ");
 	log_info_ip(priv->entry.out_ip);
 	log_info(":%d\n", priv->entry.out_port);
@@ -115,6 +94,9 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 	uint16_t *src_port;
 	uint16_t *dst_port; 
 	uint16_t ether_type;
+
+	struct napt_priv *priv = get_priv(m);
+	struct napt_mapping_entry *entry = &(priv->entry);
 	
 	for (int i = 0; i < batch->cnt; i++) {
 
@@ -145,52 +127,33 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		else
 		  continue;
 		
-		struct napt_priv *priv = get_priv(m);
-		struct napt_mapping_entry *entry;
 		if (direction[i] == OUTBOUND) {
 		  // check for an existing entry
-		  
-		  entry = &(priv->entry);
-		  if ( !(is_same_ether_addr(&(eth->s_addr),&(entry->in_eth))  &&
-			 ip->src_addr == entry->in_ip   &&
-			 *src_port    == entry->in_port &&
-			 ip->dst_addr == entry->out_ip  &&
-			 *dst_port    == entry->out_port ) ) {
-		    // if flow doesn't exist add entry
-		    /* entry->in_eth      = eth->s_addr; */
-		    /* entry->in_ip       = ip->src_addr; */
-		    /* entry->in_port     = *src_port; */
-		    /* entry->out_ip      = ip->dst_addr; */
-		    /* entry->out_port    = *dst_port; */
-		    /* entry->nat_port = 55001; */
+		  if ( ip->src_addr == entry->in_ip   &&
+		       *src_port    == entry->in_port &&
+		       ip->dst_addr == entry->out_ip  &&
+		       *dst_port    == entry->out_port ) {
+		    // rewrite source ip:port
+		    ip->src_addr = priv->nat_ip;
+		    *src_port = entry->nat_port;
 		  }
-		  // rewrite the source eth to nat_eth
-		  eth->s_addr = priv->nat_eth;
-		  // rewrite the source ip to nat_ip
-		  ip->src_addr = priv->nat_ip;
-		  // rewrite the source port to entry->nat_port 
-		  *src_port = entry->nat_port; 
-		  // update all checksums
-		 
+		  else{
+		    continue;
+		  }
 		}
 		else if (direction[i] == INBOUND) {
 		  // check for an existing entry in priv->map
-		  entry = &(priv->entry);
-		  if ( !(is_same_ether_addr(&(eth->d_addr),&(priv->nat_eth)) &&
-			 ip->dst_addr == priv->nat_ip &&
-			 *dst_port    == entry->nat_port &&
-			 ip->src_addr == entry->out_ip &&
-			 *src_port    == entry->out_port ) ) {
-		    // if flow doesn't exist, don't do anything (continue)
+		  if ( ip->dst_addr == priv->nat_ip &&
+		       *dst_port    == entry->nat_port &&
+		       ip->src_addr == entry->out_ip &&
+		       *src_port    == entry->out_port ) {
+		    // rewrite destination ip/port
+		    ip->dst_addr = entry->in_ip;
+		    *dst_port = entry->in_port;
+		  }
+		  else{
 		    continue;
 		  }
-		  // rewrite the dest eth (nat_eth) to entry->in_eth
-		  eth->d_addr = entry->in_eth;
-		  // rewrite the dest ip (nat_ip) to entry->in_ip
-		  ip->dst_addr = entry->in_ip;
-		  // rewrite the dest port (entry->nat_port) to entry->in_port
-		  *dst_port = entry->in_port;
-		  // update all checksums		 
 		}
 		else {
 		  // we should report an error condition, but for now just skip the packet
