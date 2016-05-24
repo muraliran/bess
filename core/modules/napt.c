@@ -14,6 +14,17 @@
 #define INBOUND  1
 #define MAX_MAP_ENTRIES 1
 
+static void log_info_ip(uint32_t ip)
+{
+	char buf[16];
+	const char* result=inet_ntop(AF_INET,&ip,buf,sizeof(buf));
+	if (result==0) {
+	  log_info("failed to convert address to string (errno=%d)",errno);
+	}
+	log_info("%s", buf);
+}
+
+
 struct napt_mapping_entry {
   uint32_t in_ip;
   uint32_t out_ip;
@@ -26,18 +37,6 @@ struct napt_priv {
   uint32_t nat_ip;
   struct napt_mapping_entry entry;
 };
-
-
-static void log_info_ip(uint32_t ip)
-{
-	uint32_t tmp_ip = htonl(ip);
-	char buf[16];
-	const char* result=inet_ntop(AF_INET,&tmp_ip,buf,sizeof(buf));
-	if (result==0) {
-	  log_info("failed to convert address to string (errno=%d)",errno);
-	}
-	log_info("%s", buf);
-}
 
 
 static struct snobj *napt_init(struct module *m, struct snobj *arg)
