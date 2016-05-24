@@ -59,15 +59,15 @@ static struct snobj *napt_init(struct module *m, struct snobj *arg)
 
 	log_info("IN:  ");
 	log_info_ip(priv->entry.in_ip);
-	log_info(":%d  /  ", priv->entry.in_port);
+	log_info(":%d\n", priv->entry.in_port);
 	
 	log_info("NAT: ");
 	log_info_ip(priv->nat_ip);
-	log_info(":%d  /  ", priv->entry.nat_port);
+	log_info(":%d\n", priv->entry.nat_port);
+	
 	log_info("OUT: ");
 	log_info_ip(priv->entry.out_ip);
 	log_info(":%d\n", priv->entry.out_port);
-
 
 	
 	// set the nat ip based on the input arg
@@ -97,20 +97,30 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 	struct napt_priv *priv = get_priv(m);
 	struct napt_mapping_entry *entry = &(priv->entry);
 	
+	log_info("---------------------\n");	
+	log_info("napt_process_batch %d\n", batch->cnt);	
 	for (int i = 0; i < batch->cnt; i++) {
 
     		// get the direction of the flow
 		direction[i] = get_igate();
-
 		eth = (struct ether_hdr *)snb_head_data(batch->pkts[i]);
 		
 		// act only on IPv4 packets
 		if ( eth->ether_type != priv->ether_type_ipv4 ){
+		  log_info("Not an IPv4 packet, skip.\n");
 		  continue;
+		}
+
+		log_info("direction %d\n", direction[i]);    
+		log_info("packet %d\n", i);
 
 		ip = (struct ipv4_hdr *)(eth + 1);
-		
-		// of type TCP (for now)
+
+		log_info_ip(ip->src_addr);
+		log_info(" -> ");
+		log_info_ip(ip->dst_addr);
+		log_info("\n");
+
 		l4 = (void *)(ip + 1);
 		if ( ip->next_proto_id == PROTO_TYPE_TCP ) {
 		  struct tcp_hdr *tcp = (struct tcp_hdr *)l4;
@@ -125,10 +135,17 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		  dst_port = &(udp->dst_port);
 		}
 		else{
+		  log_info("unsupported protocol type\n");
 		  continue;
 		}
+
+		log_info_ip(ip->src_addr);
+		log_info(":%d ->", ntohs(*src_port));
+		log_info_ip(ip->dst_addr);
+		log_info(":%d\n", ntohs(*dst_port));
 		
 		if (direction[i] == OUTBOUND) {
+		  log_info("OUTBOUND\n");
 		  // check for an existing entry
 		  if ( ip->src_addr == entry->in_ip   &&
 		       *src_port    == entry->in_port &&
@@ -137,12 +154,15 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		    // rewrite source ip:port
 		    ip->src_addr = priv->nat_ip;
 		    *src_port = entry->nat_port;
+		    log_info("source ip:port rewritten\n");
 		  }
 		  else{
+		    log_info("entry not found\n");
 		    continue;
 		  }
 		}
 		else if (direction[i] == INBOUND) {
+		  log_info("INBOUND\n");
 		  // check for an existing entry in priv->map
 		  if ( ip->dst_addr == priv->nat_ip &&
 		       *dst_port    == entry->nat_port &&
@@ -151,13 +171,15 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		    // rewrite destination ip/port
 		    ip->dst_addr = entry->in_ip;
 		    *dst_port = entry->in_port;
+		    log_info("destination ip:port rewritten\n");
 		  }
 		  else{
+		    log_info("entry not found\n");
 		    continue;
 		  }
 		}
 		else {
-		  // we should report an error condition, but for now just skip the packet
+		  log_info("ERROR: invalid direction");
 		  continue;
 		}
 
