@@ -35,6 +35,7 @@ struct napt_mapping_entry {
 
 struct napt_priv {
   uint32_t nat_ip;
+  uint32_t ether_type_ipv4;
   struct napt_mapping_entry entry;
 };
 
@@ -46,13 +47,13 @@ static struct snobj *napt_init(struct module *m, struct snobj *arg)
 	log_info("NAPT:napt_init\n");
  	
 	// hardcode the nat IP
-	priv->nat_ip = IPv4(192, 168, 10, 4);
-	priv->entry.in_ip  = IPv4(192, 168, 10, 2);
-	priv->entry.out_ip = IPv4(192, 168, 10, 3);
-	priv->entry.in_port = 26001;
-	priv->entry.out_port = 22;
-	priv->entry.nat_port = 44001;
-
+	priv->nat_ip = htonl(IPv4(192, 168, 10, 4));
+	priv->ether_type_ipv4 = htons(ETHER_TYPE_IPv4);
+	priv->entry.in_ip  = htonl(IPv4(192, 168, 10, 2));
+	priv->entry.out_ip = htonl(IPv4(192, 168, 10, 3));
+	priv->entry.in_port = htons(26001);
+	priv->entry.out_port = htons(22);
+	priv->entry.nat_port = htons(44001);
 
 	log_info("---NAPT ENTRY---\n");	
 
@@ -88,11 +89,10 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
   	gate_idx_t direction[MAX_PKT_BURST];
 	struct ether_hdr *eth;
 	struct ipv4_hdr *ip;
-	struct tcp_hdr *tcp;
-	struct udp_hdr *udp;
+	void *l4;
+	uint16_t *l4_cksum;
 	uint16_t *src_port;
 	uint16_t *dst_port; 
-	uint16_t ether_type;
 
 	struct napt_priv *priv = get_priv(m);
 	struct napt_mapping_entry *entry = &(priv->entry);
@@ -103,28 +103,30 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		direction[i] = get_igate();
 
 		eth = (struct ether_hdr *)snb_head_data(batch->pkts[i]);
-
-		ether_type = ntohs(eth->ether_type);
 		
 		// act only on IPv4 packets
-		if ( ether_type != ETHER_TYPE_IPv4 )
+		if ( eth->ether_type != priv->ether_type_ipv4 ){
 		  continue;
 
 		ip = (struct ipv4_hdr *)(eth + 1);
 		
 		// of type TCP (for now)
+		l4 = (void *)(ip + 1);
 		if ( ip->next_proto_id == PROTO_TYPE_TCP ) {
-		  tcp = (struct tcp_hdr *)(ip + 1);
+		  struct tcp_hdr *tcp = (struct tcp_hdr *)l4;
+		  l4_cksum = &(tcp->cksum);
 		  src_port = &(tcp->src_port);
 		  dst_port = &(tcp->dst_port);
 		}
 		else if (ip->next_proto_id == PROTO_TYPE_UDP ) {
-		  udp = (struct udp_hdr *)(ip + 1);
+		  struct udp_hdr *udp = (struct udp_hdr *)(ip + 1);
+		  l4_cksum = &(udp->dgram_cksum);
 		  src_port = &(udp->src_port);
 		  dst_port = &(udp->dst_port);
 		}
-		else
+		else{
 		  continue;
+		}
 		
 		if (direction[i] == OUTBOUND) {
 		  // check for an existing entry
@@ -157,7 +159,15 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		else {
 		  // we should report an error condition, but for now just skip the packet
 		  continue;
-		}		
+		}
+
+		// update L3 checksum
+		ip->hdr_checksum = 0;
+		ip->hdr_checksum = rte_ipv4_cksum(ip);
+				
+		// update L4 checksum
+		*l4_cksum = 0;
+		*l4_cksum = rte_ipv4_udptcp_cksum(ip, l4);
 	}
 
 	run_split(m, direction, batch);
