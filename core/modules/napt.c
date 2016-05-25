@@ -36,7 +36,8 @@ struct napt_mapping_entry {
 struct napt_priv {
   uint32_t nat_ip;
   uint32_t ether_type_ipv4;
-  struct napt_mapping_entry entry;
+  struct napt_mapping_entry entry[MAX_MAP_ENTRIES];
+  int num_entries;
 };
 
 
@@ -49,25 +50,26 @@ static struct snobj *napt_init(struct module *m, struct snobj *arg)
 	// hardcode the nat IP
 	priv->nat_ip = htonl(IPv4(192, 168, 10, 4));
 	priv->ether_type_ipv4 = htons(ETHER_TYPE_IPv4);
-	priv->entry.in_ip  = htonl(IPv4(192, 168, 10, 2));
-	priv->entry.out_ip = htonl(IPv4(192, 168, 10, 3));
-	priv->entry.in_port = htons(26001);
-	priv->entry.out_port = htons(22);
-	priv->entry.nat_port = htons(44001);
-
+	priv->entry[0].in_ip  = htonl(IPv4(192, 168, 10, 2));
+	priv->entry[0].out_ip = htonl(IPv4(192, 168, 10, 3));
+	priv->entry[0].in_port = htons(26001);
+	priv->entry[0].out_port = htons(22);
+	priv->entry[0].nat_port = htons(44001);
+	priv->num_entries = 1;
+	
 	log_info("---NAPT ENTRY---\n");	
 
 	log_info("IN:  ");
-	log_info_ip(priv->entry.in_ip);
-	log_info(":%d\n", priv->entry.in_port);
+	log_info_ip(priv->entry[0].in_ip);
+	log_info(":%d\n", priv->entry[0].in_port);
 	
 	log_info("NAT: ");
 	log_info_ip(priv->nat_ip);
-	log_info(":%d\n", priv->entry.nat_port);
+	log_info(":%d\n", priv->entry[0].nat_port);
 	
 	log_info("OUT: ");
-	log_info_ip(priv->entry.out_ip);
-	log_info(":%d\n", priv->entry.out_port);
+	log_info_ip(priv->entry[0].out_ip);
+	log_info(":%d\n", priv->entry[0].out_port);
 
 	
 	// set the nat ip based on the input arg
@@ -119,7 +121,7 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 	uint16_t *dst_port; 
 
 	struct napt_priv *priv = get_priv(m);
-	struct napt_mapping_entry *entry = &(priv->entry);
+	struct napt_mapping_entry *entry = &(priv->entry[0]);
 	
 	log_info("---------------------\n");	
 	log_info("napt_process_batch %d\n", batch->cnt);	
