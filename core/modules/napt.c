@@ -13,6 +13,7 @@
 #define OUTBOUND 0
 #define INBOUND  1
 #define MAX_MAP_ENTRIES 10
+#define NAT_START_PORT  44001
 
 static void log_info_ip(uint32_t ip)
 {
@@ -45,19 +46,19 @@ static int add_entry(struct napt_priv *priv,
 		     uint32_t in_ip,
 		     uint16_t in_port,
 		     uint32_t out_ip,
-		     uint16_t out_port,
-		     uint16_t nat_port)
+		     uint16_t out_port)
 {
   if (priv->num_entries == MAX_MAP_ENTRIES)
-    return 0;
+    return -1;
   
   priv->entry[priv->num_entries].in_ip    = in_ip;
   priv->entry[priv->num_entries].out_ip   = out_ip;
   priv->entry[priv->num_entries].in_port  = in_port;
   priv->entry[priv->num_entries].out_port = out_port;
-  priv->entry[priv->num_entries].nat_port = nat_port;
+  priv->entry[priv->num_entries].nat_port = htons(NAT_START_PORT +
+						  priv->num_entries);
   priv->num_entries++;
-  return 1;
+  return priv->num_entries - 1;
 }
 
 
@@ -70,30 +71,8 @@ static struct snobj *napt_init(struct module *m, struct snobj *arg)
 	// hardcode the nat IP
 	priv->nat_ip = htonl(IPv4(192, 168, 10, 4));
 	priv->ether_type_ipv4 = htons(ETHER_TYPE_IPv4);
-
-	add_entry(priv,
-		  htonl(IPv4(192, 168, 10, 2)),
-		  htons(26001),
-		  htonl(IPv4(192, 168, 10, 3)),
-		  htons(22),
-		  htons(44001));
 	
-	log_info("---NAPT ENTRY---\n");	
-
-	log_info("IN:  ");
-	log_info_ip(priv->entry[0].in_ip);
-	log_info(":%d\n", priv->entry[0].in_port);
-	
-	log_info("NAT: ");
-	log_info_ip(priv->nat_ip);
-	log_info(":%d\n", priv->entry[0].nat_port);
-	
-	log_info("OUT: ");
-	log_info_ip(priv->entry[0].out_ip);
-	log_info(":%d\n", priv->entry[0].out_port);
-
-	
-	// set the nat ip based on the input arg
+	// Set the nat ip based on the input arg
 	//	if (arg) {
 	//  char *ip_str = snobj_eval_str(arg, "ip");
 	//  char *octet;
@@ -106,8 +85,8 @@ static struct snobj *napt_init(struct module *m, struct snobj *arg)
 }
 
 
-static int outbound_flow_match(struct ipv4_hdr *ip,
-			       struct napt_mapping_entry *entry,
+static int outbound_flow_match(struct napt_mapping_entry *entry,
+			       struct ipv4_hdr *ip,
 			       uint16_t *src_port,
 			       uint16_t *dst_port)
 {
@@ -118,9 +97,9 @@ static int outbound_flow_match(struct ipv4_hdr *ip,
 }
 
 
-static int inbound_flow_match(struct ipv4_hdr *ip,
-			      struct napt_priv *priv,
+static int inbound_flow_match(struct napt_priv *priv,
 			      struct napt_mapping_entry *entry,
+			      struct ipv4_hdr *ip,
 			      uint16_t *src_port,
 			      uint16_t *dst_port)
 {
@@ -129,6 +108,31 @@ static int inbound_flow_match(struct ipv4_hdr *ip,
 	   ip->src_addr == entry->out_ip &&
 	   *src_port    == entry->out_port );
 }
+
+
+static int find_matching_entry(struct napt_priv *priv,
+			       gate_idx_t direction,
+			       struct ipv4_hdr *ip,
+			       uint16_t *src_port,
+			       uint16_t *dst_port)
+{
+  struct napt_mapping_entry *entry;
+  for(int i=0; i<priv->num_entries; i++) {
+    entry = &(priv->entry[i]);
+    if (direction == OUTBOUND) {
+      if (outbound_flow_match(entry, ip, src_port, dst_port))
+	return i;
+    }
+    else if (direction == INBOUND) {
+      if (inbound_flow_match(priv, entry, ip, src_port, dst_port))
+	return i;
+    }
+    else
+      return -1;
+  }
+  return -1;
+}
+
 
 
 static void napt_process_batch(struct module *m, struct pkt_batch *batch)
@@ -142,7 +146,7 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 	uint16_t *dst_port; 
 
 	struct napt_priv *priv = get_priv(m);
-	struct napt_mapping_entry *entry = &(priv->entry[0]);
+	struct napt_mapping_entry *entry;
 	
 	log_info("---------------------\n");	
 	log_info("napt_process_batch %d\n", batch->cnt);	
@@ -190,32 +194,45 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		log_info(":%d ->", ntohs(*src_port));
 		log_info_ip(ip->dst_addr);
 		log_info(":%d\n", ntohs(*dst_port));
-		
+
+		int ind = -1;
 		if (direction[i] == OUTBOUND) {
 		  log_info("OUTBOUND\n");
 		  // check for an existing entry
-		  if (outbound_flow_match(ip, entry, src_port, dst_port)) {
+		  ind = find_matching_entry(priv, direction[i], ip, src_port, dst_port); 
+		  if (ind < 0)
+		    ind = add_entry(priv,
+				    ip->src_addr,
+				    *src_port,
+				    ip->dst_addr,
+				    *dst_port);
+				    
+		  if (ind >= 0) {
+		    entry = &(priv->entry[ind]);
 		    // rewrite source ip:port
 		    ip->src_addr = priv->nat_ip;
 		    *src_port = entry->nat_port;
 		    log_info("source ip:port rewritten\n");
 		  }
 		  else{
-		    log_info("entry not found\n");
+		    log_info("MAX ENTRIES ALREADY USED\n");
 		    continue;
 		  }
 		}
 		else if (direction[i] == INBOUND) {
 		  log_info("INBOUND\n");
 		  // check for an existing entry in priv->map
-		  if (inbound_flow_match(ip, priv, entry, src_port, dst_port)) {
+		  ind = find_matching_entry(priv, direction[i], ip, src_port, dst_port); 
+		  if (ind >= 0) {
+		    entry = &(priv->entry[ind]);
 		    // rewrite destination ip/port
 		    ip->dst_addr = entry->in_ip;
 		    *dst_port = entry->in_port;
 		    log_info("destination ip:port rewritten\n");
 		  }
 		  else{
-		    log_info("entry not found\n");
+		    // packet should be deleted
+		    log_info("ENTRY NOT FOUND\n");
 		    continue;
 		  }
 		}
