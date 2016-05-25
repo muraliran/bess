@@ -12,7 +12,7 @@
 #define PROTO_TYPE_UDP  0x11
 #define OUTBOUND 0
 #define INBOUND  1
-#define MAX_MAP_ENTRIES 1
+#define MAX_MAP_ENTRIES 10
 
 static void log_info_ip(uint32_t ip)
 {
@@ -41,6 +41,26 @@ struct napt_priv {
 };
 
 
+static int add_entry(struct napt_priv *priv,
+		     uint32_t in_ip,
+		     uint16_t in_port,
+		     uint32_t out_ip,
+		     uint16_t out_port,
+		     uint16_t nat_port)
+{
+  if (priv->num_entries == MAX_MAP_ENTRIES)
+    return 0;
+  
+  priv->entry[priv->num_entries].in_ip    = in_ip;
+  priv->entry[priv->num_entries].out_ip   = out_ip;
+  priv->entry[priv->num_entries].in_port  = in_port;
+  priv->entry[priv->num_entries].out_port = out_port;
+  priv->entry[priv->num_entries].nat_port = nat_port;
+  priv->num_entries++;
+  return 1;
+}
+
+
 static struct snobj *napt_init(struct module *m, struct snobj *arg)
 {
 	struct napt_priv *priv = get_priv(m);
@@ -50,12 +70,13 @@ static struct snobj *napt_init(struct module *m, struct snobj *arg)
 	// hardcode the nat IP
 	priv->nat_ip = htonl(IPv4(192, 168, 10, 4));
 	priv->ether_type_ipv4 = htons(ETHER_TYPE_IPv4);
-	priv->entry[0].in_ip  = htonl(IPv4(192, 168, 10, 2));
-	priv->entry[0].out_ip = htonl(IPv4(192, 168, 10, 3));
-	priv->entry[0].in_port = htons(26001);
-	priv->entry[0].out_port = htons(22);
-	priv->entry[0].nat_port = htons(44001);
-	priv->num_entries = 1;
+
+	add_entry(priv,
+		  htonl(IPv4(192, 168, 10, 2)),
+		  htons(26001),
+		  htonl(IPv4(192, 168, 10, 3)),
+		  htons(22),
+		  htons(44001));
 	
 	log_info("---NAPT ENTRY---\n");	
 
