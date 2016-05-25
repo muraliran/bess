@@ -83,6 +83,30 @@ static struct snobj *napt_init(struct module *m, struct snobj *arg)
 }
 
 
+static int outbound_flow_match(struct ipv4_hdr *ip,
+			       struct napt_mapping_entry *entry,
+			       uint16_t *src_port,
+			       uint16_t *dst_port)
+{
+  return ( ip->src_addr == entry->in_ip   &&
+	   *src_port    == entry->in_port &&
+	   ip->dst_addr == entry->out_ip  &&
+	   *dst_port    == entry->out_port );
+}
+
+
+static int inbound_flow_match(struct ipv4_hdr *ip,
+			      struct napt_priv *priv,
+			      struct napt_mapping_entry *entry,
+			      uint16_t *src_port,
+			      uint16_t *dst_port)
+{
+  return ( ip->dst_addr == priv->nat_ip &&
+	   *dst_port    == entry->nat_port &&
+	   ip->src_addr == entry->out_ip &&
+	   *src_port    == entry->out_port );
+}
+
 
 static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 {
@@ -147,10 +171,7 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		if (direction[i] == OUTBOUND) {
 		  log_info("OUTBOUND\n");
 		  // check for an existing entry
-		  if ( ip->src_addr == entry->in_ip   &&
-		       *src_port    == entry->in_port &&
-		       ip->dst_addr == entry->out_ip  &&
-		       *dst_port    == entry->out_port ) {
+		  if (outbound_flow_match(ip, entry, src_port, dst_port)) {
 		    // rewrite source ip:port
 		    ip->src_addr = priv->nat_ip;
 		    *src_port = entry->nat_port;
@@ -164,10 +185,7 @@ static void napt_process_batch(struct module *m, struct pkt_batch *batch)
 		else if (direction[i] == INBOUND) {
 		  log_info("INBOUND\n");
 		  // check for an existing entry in priv->map
-		  if ( ip->dst_addr == priv->nat_ip &&
-		       *dst_port    == entry->nat_port &&
-		       ip->src_addr == entry->out_ip &&
-		       *src_port    == entry->out_port ) {
+		  if (inbound_flow_match(ip, priv, entry, src_port, dst_port)) {
 		    // rewrite destination ip/port
 		    ip->dst_addr = entry->in_ip;
 		    *dst_port = entry->in_port;
