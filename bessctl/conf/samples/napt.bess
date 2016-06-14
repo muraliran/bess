@@ -6,8 +6,8 @@ def aton(ip):
 static_arp_table = { '192.168.10.2' : '000000000002',
                      '192.168.10.3' : '000000000003'}
 
-APID=204690
-BPID=204702
+APID=100523
+BPID=100539 
 
 A = Port(driver='VPort',container_pid=APID,name='A',ifname='eth0',ip_addr='192.168.10.2/24',mac_addr='00:00:00:00:00:02')
 B = Port(driver='VPort',container_pid=BPID,name='B',ifname='eth0',ip_addr='192.168.10.3/24',mac_addr='00:00:00:00:00:03')
@@ -17,34 +17,30 @@ Ao = Ao::PortOut(port=A)
 Bi = Bi::PortInc(port=B)
 Bo = Bo::PortOut(port=B)
 N = N::NAPT()
-MRG0 = MRG0::Merge()
-MRG1 = MRG1::Merge()
 
-# we need two copies of
-# match on destination IP address
 ARPm0::ExactMatch(fields=[{'offset':30, 'size':4}],
                size=4096)
 ARPm1::ExactMatch(fields=[{'offset':30, 'size':4}],
                size=4096)
 
-# if there's no entry, drop
+
+# incoming traffic goes first to the NAPT
+# then to the ARP re-writer
+Ai -> 0:N:0 -> ARPm0
+Bi -> 1:N:1 -> ARPm1
+
+# match on destination IP address and
+# do the appropriate rewrite of the MAC
+i=1
+for k,v in static_arp_table.items():
+    ARPm0.add(fields=[aton(k)], gate=i)
+    ARPm0:i -> Update([{'offset': 0, 'size': 6, 'value': v}]) -> Bo
+    ARPm1.add(fields=[aton(k)], gate=i)
+    ARPm1:i -> Update([{'offset': 0, 'size': 6, 'value': v}]) -> Ao
+    i = i + 1
+
+# otherwise, if there's no entry, drop
 ARPm0.set_default_gate(0)
 ARPm0:0 -> Sink()
 ARPm1.set_default_gate(0)
 ARPm1:0 -> Sink()
-
-# otherwise, do the appropriate rewrite of the MAC
-i=1
-for k,v in static_arp_table.items():
-    ARPm0.add(fields=[aton(k)], gate=i)
-    ARPm0:i -> Update([{'offset': 0, 'size': 6, 'value': v}]) -> MRG0
-    ARPm1.add(fields=[aton(k)], gate=i)
-    ARPm1:i -> Update([{'offset': 0, 'size': 6, 'value': v}]) -> MRG1
-    i = i + 1
-
-
-Ai -> 0:N:0 -> ARPm0
-MRG0 -> Bo
-
-Bi -> 1:N:1 -> ARPm1
-MRG1 -> Ao
