@@ -1,4 +1,5 @@
 // Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// Copyright (c) 2017-2018, Futurewei, Inc.
 // Copyright (c) 2017, The Regents of the University of California.
 // All rights reserved.
 //
@@ -1032,3 +1033,99 @@ message MplsPopArg {
    bool remove_eth_header = 1; // Remove ETH header with the pop
    uint32 next_eth_type = 2; /// The next ETH type to set
 }
+
+/**
+ * SmartSwitch module is associated with one or more datapaths
+ * each datapath is identified by a GUID representing a network.
+ * It is analogius to a broadcast domain in ipv4 where all ports
+ * attached to this instance will get the broadcast message. And
+ * in ipv6 analogous to a multicast range.
+ *
+ * There is no concept of subnet. However, one can add a number
+ * of datapath IDs associated with one switch which are all in
+ * the same broadcast domain. Doing that may make routing
+ * less policy based. Some times however, it is useful to
+ * compound a single switch to reflect like ipv4 broadcast domains.
+ *
+ * Typically, each instance would handle one datapath ID meaning
+ * the broadcast domain restricted to a single subnet or ipv6
+ * multicast range.
+ *
+ * __Input Gates__: many (configurable - same as output gates)
+ * __Output Gates__: many (configurable)
+ *
+ */
+message SmartSwitchArg {
+   repeated string dp_ids = 1; // list of datapath ids
+}
+
+
+/**
+ * SmartSwitch command to attach a device to the switch
+ */
+message SmartSwitchCommandAttachArg {
+   string dp_id = 1;   // datapath
+   string port_id = 2; // port or device (guid) to attach
+}
+
+/**
+ * After attach operation the command responds by returning
+ * gate id for that port
+ */
+message SmartSwitchCommandAttachResponse {
+   uint64 gate = 1;    // in and out gates are same number
+}
+
+/**
+ * SmartSwitch command to detach a device to the switch
+ */
+message SmartSwitchCommandDetachArg {
+   string dp_id = 1;   // datapath
+   string port_id = 2; // port or device to detach from switch
+}
+
+/**
+ * SmartSWitch command to know gate id attached to a device or port
+ * A device is a virtual device composed of modules and port is
+ * vport or vhost attached to container or vm
+ */
+message SmartSwitchCommandQueryGateArg {
+   string port_id = 1;
+}
+
+/**
+ * This message type provides the reponse to the function SmartSwitch QueryGate
+ * It returns the gate that a requested MAC address is currently assigned to.
+ */
+message SmartSwitchCommandQueryGateResponse {
+  uint64 gate = 1;  // in and out gate same number
+}
+
+
+/* SmartBridge module can be used to route traffic between datapaths
+ * It is like a L3 router for this internal addressing scheme
+ *
+ * __Input Gates__: many (configurable)
+ * __Output Gates__ many (configurable)
+ */
+message SmartBridgeArg {
+   repeated string dp_ids = 1; // list of input datapaths
+   repeated string dp_routes = 2; // list of route mappings
+}
+
+/**
+ * AddRoute command to add a new route from out datapath to another
+ */
+message SmartBridgeCommandAddRouteArg {
+   repeated string dp_ids = 1; // list of valid dp_ids
+   uint32 policy_id = 2; // an id referencig the policy enum
+}
+
+/**
+ * DelRoute command to delete a route entry
+ */
+message SmartBridgeCommandDelRouteArg {
+   repeated string route = 1; // list of valid dp_ids
+   uint32 policy_id = 2; // an id referencig the policy enum
+}
+
