@@ -1,0 +1,49 @@
+#
+# Script to attach container named mc34_1 to a datapath
+#
+
+import os
+import time
+
+bess.add_worker(0,24)
+#bess.add_worker(1,25)
+
+v_mc34_1 = VPort(ifname='v_mc34_1', docker='mc34_1', ip_addrs=['10.20.20.11/24'])
+#p0 = PMDPort(pci='0000:84:00.0')
+#p0 = PMDPort(port_id=0)
+port0::PMDPort(port_id=0)
+#inp00::QueueInc(port=port0, qid=0)
+#out00::QueueOut(port=port0, qid=0)
+
+PortInc(port=port0) -> PortOut(port=v_mc34_1)
+PortInc(port=v_mc34_1) -> PortOut(port=port0)
+
+
+#PortInc(port=v_mc34_1) -> PortOut(port=p0.name)
+#PortInc(port=p0.name) -> PortOut(port=v_mc34_1)
+
+#hlb = HashLB(gates=[0, 1], mode='l2')
+#src0.attach_task(wid=0)
+#src1.attach_task(wid=1)
+
+#PortInc(port=v_mc34_1) -> ipfwd::IPLookup()
+#PortInc(port=p0.name) -> ipfwd
+
+#ipfwd:0 -> PortOut(port=p0.name)
+#ipfwd:1 -> PortOut(port=v_mc34_1)
+
+#ipfwd.add(prefix='10.20.20.0', prefix_len=24, gate=1)
+#ipfwd.add(prefix='0.0.0.0', prefix_len=0, gate=0)
+
+print("Connection succesful")
+
+bess.resume_all()
+
+# wait for user command to exit
+
+usercmd = "dontexit"
+while (usercmd != "exit"):
+     usercmd = input("After test complete type 'exit': ")
+
+bess.pause_all()
+bess.reset_all()

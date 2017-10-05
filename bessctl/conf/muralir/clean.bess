@@ -1,0 +1,6 @@
+# Script to cleanup
+#
+
+bess.pause_all()
+bess.reset_all()
+
