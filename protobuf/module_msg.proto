@@ -1073,7 +1073,7 @@ message SmartSwitchCommandAttachArg {
  * gate id for that port
  */
 message SmartSwitchCommandAttachResponse {
-   uint64 gate = 1;    // in and out gates are same number
+   uint32 gate = 1;    // in and out gates are same number
 }
 
 /**

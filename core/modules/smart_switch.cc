@@ -40,13 +40,13 @@
 /**  Module impl   ********************/
 
 const Commands SmartSwitch::cmds = {
-    {"attach", "SmartSwitchAttachArg",
+    {"attach", "SmartSwitchCommandAttachArg",
         MODULE_CMD_FUNC(&SmartSwitch::CommandAttach),
         Command::THREAD_UNSAFE},
-    {"detach", "SmartSwitchDetachArg",
+    {"detach", "SmartSwitchCommandDetachArg",
         MODULE_CMD_FUNC(&SmartSwitch::CommandDetach),
         Command::THREAD_UNSAFE},
-    {"query_gate", "SmartSwitchQueryGateArg",
+    {"query_gate", "SmartSwitchCommandQueryGateArg",
         MODULE_CMD_FUNC(&SmartSwitch::CommandQueryGate),
         Command::THREAD_UNSAFE},
 };
@@ -58,11 +58,11 @@ CommandResponse SmartSwitch::Init(const bess::pb::SmartSwitchArg &arg) {
         datapaths.push_back(arg.dp_ids(i));
     }
 
-    port_id_attr_id = AddMetadataAttr(PORT_ID_ATTR, PORT_ID_SIZE, 
-                            bess::metadata::Attribute::AccessMode::kRead);
-    if (port_id_attr_id < 1) {
-        return CommandFailure(EINVAL, "Adding attribute PORT_ID failed");
-    }
+//    port_id_attr_id = AddMetadataAttr(PORT_ID_ATTR, PORT_ID_SIZE, 
+//                            bess::metadata::Attribute::AccessMode::kRead);
+//    if (port_id_attr_id < 1) {
+//        return CommandFailure(EINVAL, "Adding attribute PORT_ID failed");
+//    }
 
     return CommandSuccess();
 }
