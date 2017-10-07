@@ -33,6 +33,7 @@
 
 #include "../module.h"
 #include "../pb/module_msg.pb.h"
+#include "../utils/autouuid.h"
 
 #include <map>
 #include <vector>
@@ -53,7 +54,7 @@ class SmartSwitch final : public Module {
   };
   static const Commands cmds;
 
-  SmartSwitch() : Module(), next_new_gate(1), port_id_attr_id(0) {
+  SmartSwitch() : Module(), next_new_gate_(1), port_id_attr_id_(0) {
             max_allowed_workers_ = Worker::kMaxWorkers;
   }
 
@@ -73,11 +74,11 @@ class SmartSwitch final : public Module {
   const gate_idx_t kNumGates = 256;  // both in & out each
   const gate_idx_t kDefaultGate = 0; // both in & out
 
-  guid_int_map port_table;
-  string_vector datapaths;
-  gate_idx_t   next_new_gate;
-  std::vector<gate_idx_t> free_gates;
-  int port_id_attr_id;
+  guid_int_map port_table_;
+  string_vector datapaths_;
+  gate_idx_t   next_new_gate_;
+  std::vector<gate_idx_t> free_gates_;
+  int port_id_attr_id_;
 };
 
 

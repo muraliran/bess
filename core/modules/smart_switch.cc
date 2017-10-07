@@ -31,11 +31,6 @@
 #include "smart_switch.h"
 #include <algorithm>
 
-/**
- * Utility Functions
- */
-
-
 
 /**  Module impl   ********************/
 
@@ -55,8 +50,10 @@ const Commands SmartSwitch::cmds = {
 CommandResponse SmartSwitch::Init(const bess::pb::SmartSwitchArg &arg) {
     // add the input datapaths as supported datapaths
     for (int i=0; i < arg.dp_ids_size(); i++) {
-        datapaths.push_back(arg.dp_ids(i));
+        datapaths_.push_back(arg.dp_ids(i));
     }
+
+    port_id_attr_id_ = 0; // port_id is the first metadat offset
 
 //    port_id_attr_id = AddMetadataAttr(PORT_ID_ATTR, PORT_ID_SIZE, 
 //                            bess::metadata::Attribute::AccessMode::kRead);
@@ -69,9 +66,9 @@ CommandResponse SmartSwitch::Init(const bess::pb::SmartSwitchArg &arg) {
 
 
 void SmartSwitch::DeInit() {
-    port_table.clear();
-    datapaths.clear();
-    free_gates.clear();
+    port_table_.clear();
+    datapaths_.clear();
+    free_gates_.clear();
 }
 
 
@@ -81,11 +78,15 @@ void SmartSwitch::ProcessBatch(bess::PacketBatch *batch) {
 
     for (int i=0; i < batch->cnt(); i++) {
         out_gates[i] = default_gate;
-        //bess::Packet *snb = batch->pkts()[i];
-        int offset = bess::Packet::mt_offset_to_databuf_offset(attr_offset(port_id_attr_id));
+
+        // set pointer to metadata buf
+        int offset = bess::Packet::mt_offset_to_databuf_offset(attr_offset(port_id_attr_id_));
         char *buf_addr = reinterpret_cast<char *>(batch->pkts()[i]->buffer());
+        buf_addr +=  batch->pkts()[i]->data_off();
         buf_addr += offset;
-        // TODO: Convert 16 bytes to ascii and store in string
+        bess::utils::Autouuid portid(reinterpret_cast<unsigned char*>(buf_addr));
+        const char* port_id = portid.get_struuid();
+        out_gates[i] = port_table_[port_id]; 
     }
     RunSplit(out_gates, batch);
 }
@@ -94,19 +95,19 @@ CommandResponse SmartSwitch::CommandAttach(
         const bess::pb::SmartSwitchCommandAttachArg & arg) {
     // attach will send a response containing gate number
     bess::pb::SmartSwitchCommandAttachResponse resp;
-    if ( std::find(datapaths.begin(), datapaths.end(), arg.dp_id()) ==
-            datapaths.end()) {
+    if ( std::find(datapaths_.begin(), datapaths_.end(), arg.dp_id()) ==
+            datapaths_.end()) {
         return CommandFailure(ENOENT, "datapath %s not found in the switch",
                                         arg.dp_id().c_str());
     }
-    if (next_new_gate < kNumGates) {
-        port_table[arg.port_id()] = next_new_gate;
-        resp.set_gate(next_new_gate);
-        next_new_gate++;
+    if (next_new_gate_ < kNumGates) {
+        port_table_[arg.port_id()] = next_new_gate_;
+        resp.set_gate(next_new_gate_);
+        next_new_gate_++;
     } else {
-        if (free_gates.size() > 0) {
-            port_table[arg.port_id()] = free_gates.back();
-            free_gates.pop_back();
+        if (free_gates_.size() > 0) {
+            port_table_[arg.port_id()] = free_gates_.back();
+            free_gates_.pop_back();
         } else {
             return CommandFailure(EINVAL,
                     "Max %d gates. No more gates free to allocate.",
@@ -120,11 +121,11 @@ CommandResponse SmartSwitch::CommandAttach(
 CommandResponse SmartSwitch::CommandDetach(
         const bess::pb::SmartSwitchCommandDetachArg & arg) {
     guid_int_map::iterator it;
-    if ((std::find(datapaths.begin(), datapaths.end(), arg.dp_id()) !=
-             datapaths.end()) ||
-            (it = port_table.find(arg.port_id())) !=  port_table.end()) {
-        free_gates.push_back(it->second);
-        port_table.erase(it);
+    if ((std::find(datapaths_.begin(), datapaths_.end(), arg.dp_id()) !=
+             datapaths_.end()) ||
+            (it = port_table_.find(arg.port_id())) !=  port_table_.end()) {
+        free_gates_.push_back(it->second);
+        port_table_.erase(it);
     } else {
         return CommandFailure(ENOENT,
                 "datapath %s or port %s not in the switch",
@@ -137,7 +138,7 @@ CommandResponse SmartSwitch::CommandQueryGate(
         const bess::pb::SmartSwitchCommandQueryGateArg & arg) {
     guid_int_map::iterator it;
     bess::pb::SmartSwitchCommandQueryGateResponse resp;
-    if ((it = port_table.find(arg.port_id())) !=  port_table.end()) {
+    if ((it = port_table_.find(arg.port_id())) !=  port_table_.end()) {
         resp.set_gate(it->second);
     } else {
         return CommandFailure(ENOENT,
