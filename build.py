@@ -187,6 +187,7 @@ def check_essential():
 
     required('pcap/pcap.h', 'libpcap-dev', 'gcc')
     required('zlib.h', 'zlib1g-dev', 'gcc')
+    required('uuid/uuid.h', 'uuid-dev', 'gcc')
     required('glog/logging.h', 'libgoogle-glog-dev', 'g++')
     required('gflags/gflags.h', 'libgflags-dev', 'g++')
     required('gtest/gtest.h', 'libgtest-dev', 'g++')

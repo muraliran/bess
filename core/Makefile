@@ -82,11 +82,11 @@ endif
 # user requests a static build.
 ALWAYS_DYN_LIBS := -lpthread -ldl
 # These libraries are not supported by pkg-config.
-ALWAYS_LIBS := -lpcap -lgflags
+ALWAYS_LIBS := -lpcap -lgflags -luuid
 # If pkg-config is available, we just need a list of the dependecies.
 PKG_CONFIG_DEPS := libglog protobuf grpc++ libunwind zlib
 # If pkg-config is not available, we need to list the libs we depend on.
-NO_PKG_CONFIG_LIBS := -lglog -lgflags -lprotobuf -lgrpc++ -lunwind -lz
+NO_PKG_CONFIG_LIBS := -lglog -lgflags -lprotobuf -lgrpc++ -lunwind -lz -luuid
 # If pkg-config is not available and we're static linking, we also need
 # the indirect dependecies.  This is annoying, because they may change
 # in future versions.
