@@ -1,5 +1,4 @@
-// Copyright (c) 2014-2016, The Regents of the University of California.
-// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// Copyright (c) 2017, Nefeli Networks, Inc.
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -28,30 +27,10 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef BESS_MODULES_SPLIT_H_
-#define BESS_MODULES_SPLIT_H_
+#include "shared_obj.h"
 
-#include "../module.h"
-#include "../pb/module_msg.pb.h"
+namespace bess {
 
-class Split final : public Module {
- public:
-  static const gate_idx_t kNumOGates = MAX_GATES;
+SharedObjectSpace shared_objects;
 
-  Split() : Module(), mask_(), attr_id_(), offset_(), size_() {
-    max_allowed_workers_ = Worker::kMaxWorkers;
-  }
-
-  CommandResponse Init(const bess::pb::SplitArg &arg);
-
-  void ProcessBatch(bess::PacketBatch *batch);
-
- private:
-  uint64_t mask_;
-  int shift_;
-  int attr_id_;
-  size_t offset_;
-  size_t size_;
-};
-
-#endif  // BESS_MODULES_SPLIT_H_
+}  // namespace bess
