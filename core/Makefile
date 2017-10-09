@@ -137,8 +137,6 @@ ifdef BESS_LINK_DYNAMIC
     LIBS_DL_SHARED =
     ifeq ($(HAS_PKG_CONFIG), yes)
       PKG_LIBS := $(shell $(PKG_CONFIG) --libs $(PKG_CONFIG_DEPS))
-      @echo $(value PKG_CONFIG_DEPS)
-      @echo $(value PKG_LIBS)
     else
       PKG_LIBS := $(NO_PKG_CONFIG_LIBS)
     endif

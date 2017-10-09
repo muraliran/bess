@@ -49,7 +49,7 @@ class Autouuid {
 
     Autouuid(const unsigned char* buf) {
       std::memcpy(uuid_, buf, 16);
-      uuid_unparse_lower( uuid_, struuid_);
+      uuid_unparse( uuid_, struuid_);
     }
 
     Autouuid& operator=( const char* uuid_str ) {
