@@ -31,6 +31,7 @@
 #include "smart_switch.h"
 #include <algorithm>
 
+//using bess::snbuff_layout::SNBUF_METADATA_OFF;
 
 /**  Module impl   ********************/
 
@@ -53,13 +54,20 @@ CommandResponse SmartSwitch::Init(const bess::pb::SmartSwitchArg &arg) {
         datapaths_.push_back(arg.dp_ids(i));
     }
 
-    port_id_attr_id_ = 0; // port_id is the first metadat offset
-
-//    port_id_attr_id = AddMetadataAttr(PORT_ID_ATTR, PORT_ID_SIZE, 
+//    int attr_id = AddMetadataAttr("Port_ID", 16, 
 //                            bess::metadata::Attribute::AccessMode::kRead);
-//    if (port_id_attr_id < 1) {
-//        return CommandFailure(EINVAL, "Adding attribute PORT_ID failed");
+//    if (attr_id < 0) {
+//        return CommandFailure(EINVAL, "Adding attribute Port_ID failed with attr_id = %d", attr_id);
+//    } else {
+//        attr_id = AddMetadataAttr("PortNo", 1, bess::metadata::Attribute::AccessMode::kRead);
+//        if (attr_id < 0) {
+//            return CommandFailure(EINVAL, "Adding attribute Port_ID failed with attr_id = %d", attr_id);
+//        }
 //    }
+    int attr_id = AddMetadataAttr("PortNo", 1, bess::metadata::Attribute::AccessMode::kRead);
+    if (attr_id < 0) {
+        return CommandFailure(EINVAL, "Adding attribute Port_ID failed with attr_id = %d", attr_id);
+    }
 
     return CommandSuccess();
 }
@@ -76,17 +84,29 @@ void SmartSwitch::ProcessBatch(bess::PacketBatch *batch) {
     gate_idx_t default_gate = ACCESS_ONCE(kDefaultGate);
     gate_idx_t out_gates[bess::PacketBatch::kMaxBurst];
 
-    for (int i=0; i < batch->cnt(); i++) {
+    int cnt = batch->cnt();
+    //int size = 16;
+    //int shift = 0;
+    //int pkt_off = 192;
+
+    for (int i=0; i < cnt; i++) {
         out_gates[i] = default_gate;
 
         // set pointer to metadata buf
-        int offset = bess::Packet::mt_offset_to_databuf_offset(attr_offset(port_id_attr_id_));
-        char *buf_addr = reinterpret_cast<char *>(batch->pkts()[i]->buffer());
-        buf_addr +=  batch->pkts()[i]->data_off();
-        buf_addr += offset;
-        bess::utils::Autouuid portid(reinterpret_cast<unsigned char*>(buf_addr));
-        const char* port_id = portid.get_struuid();
-        out_gates[i] = port_table_[port_id]; 
+        //int offset = bess::Packet::mt_offset_to_databuf_offset(attr_offset(port_id_attr_id_));
+        //char *buf_addr = reinterpret_cast<char *>(batch->pkts()[i]->buffer());
+        //unsigned char *buf_addr = (unsigned char*) (batch->pkts()[i])->buffer();
+//        uint8_t *buf_port_id = &((uint8_t *)(batch->pkts()[i])->buffer())[SNBUF_METADATA_OFF + PORT_ID_OFFSET];
+//        bess::utils::Autouuid portid(buf_port_id);
+//        const char* port_id = portid.get_struuid();
+
+        bess::Packet *pkt = batch->pkts()[i];
+        //if (this->attr_offset(0)) {
+            //bess::utils::Autouuid portid(get_attr<unsigned char*>(this, 0, pkt));
+        const uint8_t port_no = get_attr<uint8_t>(this, 0, pkt);
+        out_gates[i] = port_no;
+            //out_gates[i] = port_table_[port_id]; 
+        //}
     }
     RunSplit(out_gates, batch);
 }

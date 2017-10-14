@@ -36,7 +36,7 @@ CXX ?= g++
 PROTOC ?= protoc
 PKG_CONFIG ?= pkg-config
 
-VERBOSE ?= 0
+VERBOSE ?= 5
 
 DEPDIR ?= .deps
 DEPFLAGS = -MT $@ -MMD -MP -MF $(DEPDIR)/$(@:.o=.d)
@@ -86,7 +86,7 @@ ALWAYS_LIBS := -lpcap -lgflags
 # If pkg-config is available, we just need a list of the dependecies.
 PKG_CONFIG_DEPS := uuid libglog protobuf grpc++ libunwind zlib
 # If pkg-config is not available, we need to list the libs we depend on.
-NO_PKG_CONFIG_LIBS := -luuid -lglog -lgflags -lprotobuf -lgrpc++ -lunwind -lz
+NO_PKG_CONFIG_LIBS := -lglog -lgflags -lprotobuf -lgrpc++ -lunwind -lz
 # If pkg-config is not available and we're static linking, we also need
 # the indirect dependecies.  This is annoying, because they may change
 # in future versions.
@@ -131,7 +131,7 @@ ifeq "$(shell expr $(CXXCOMPILER) = g++)" "1"
 	CXXFLAGS += -fno-gnu-unique
 endif
 
-LDFLAGS += -rdynamic -L$(DPDK_LIB_DIR) -Wl,-rpath=$(DPDK_LIB_DIR) -pthread -uuid
+LDFLAGS += -rdynamic -L$(DPDK_LIB_DIR) -Wl,-rpath=$(DPDK_LIB_DIR) -pthread -L/usr/lib/x86_64-linux-gnu
 ifdef BESS_LINK_DYNAMIC
     LIBS_ALL_SHARED = -Wl,-call_shared
     LIBS_DL_SHARED =
@@ -143,7 +143,7 @@ ifdef BESS_LINK_DYNAMIC
 else # Used static libraries
     LIBS_ALL_SHARED =
     LIBS_DL_SHARED = -Wl,-call_shared
-    LDFLAGS += -static-libstdc++
+    LDFLAGS += -static-libstdc++ -luuid
     ifeq ($(HAS_PKG_CONFIG), yes)
       PKG_LIBS := $(shell $(PKG_CONFIG) --static --libs $(PKG_CONFIG_DEPS))
       # One of our pkg-config dependency might depend on a library that

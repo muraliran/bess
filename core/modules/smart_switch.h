@@ -46,6 +46,16 @@
 typedef std::map< std::string, gate_idx_t > guid_int_map;
 typedef std::vector< std::string >  string_vector;
 
+// Offset definitions
+// NOTE: Max 32 bytes metadata per module 128 max
+#define PORT_ID_OFFSET   0
+#define PORT_ID_SIZE     16
+#define PORT_ID_ATTR     "Port_ID"
+#define FLOW_ID_OFFSET   16
+#define FLOW_ID_SIZE     1
+#define FLOW_ID_ATTR     "Flow_ID"
+
+
 class SmartSwitch final : public Module {
  public:
   enum Direction {
@@ -53,8 +63,10 @@ class SmartSwitch final : public Module {
    kReverse = 1,
   };
   static const Commands cmds;
+  static const gate_idx_t kNumOGates = 256;  // both in & out each
+  static const gate_idx_t kNumIGates = 256;  // both in & out each
 
-  SmartSwitch() : Module(), next_new_gate_(1), port_id_attr_id_(0) {
+  SmartSwitch() : Module(), next_new_gate_(1) {
             max_allowed_workers_ = Worker::kMaxWorkers;
   }
 
@@ -69,16 +81,13 @@ class SmartSwitch final : public Module {
   CommandResponse CommandQueryGate(const bess::pb::SmartSwitchCommandQueryGateArg &arg);
 
  private:
-  const char*  PORT_ID_ATTR = "PORT_ID";
-  const size_t PORT_ID_SIZE = 16;
-  const gate_idx_t kNumGates = 256;  // both in & out each
+  const gate_idx_t kNumGates = SmartSwitch::kNumOGates;
   const gate_idx_t kDefaultGate = 0; // both in & out
 
   guid_int_map port_table_;
   string_vector datapaths_;
   gate_idx_t   next_new_gate_;
   std::vector<gate_idx_t> free_gates_;
-  int port_id_attr_id_;
 };
 
 
