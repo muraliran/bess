@@ -36,7 +36,8 @@ CXX ?= g++
 PROTOC ?= protoc
 PKG_CONFIG ?= pkg-config
 
-VERBOSE ?= 5
+VERBOSE ?= 1
+DEBUG = "yes"
 
 DEPDIR ?= .deps
 DEPFLAGS = -MT $@ -MMD -MP -MF $(DEPDIR)/$(@:.o=.d)

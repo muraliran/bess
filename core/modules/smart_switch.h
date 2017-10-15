@@ -43,7 +43,7 @@
 #error this code assumes little endian architecture (x86)
 #endif
 
-typedef std::map< std::string, gate_idx_t > guid_int_map;
+typedef std::map< std::string, gate_idx_t > str_int_map;
 typedef std::vector< std::string >  string_vector;
 
 // Offset definitions
@@ -84,7 +84,8 @@ class SmartSwitch final : public Module {
   const gate_idx_t kNumGates = SmartSwitch::kNumOGates;
   const gate_idx_t kDefaultGate = 0; // both in & out
 
-  guid_int_map port_table_;
+  str_int_map port_table_; // port_id to gate mapping
+  str_int_map fdb_table_;   // mac address to gate mapping
   string_vector datapaths_;
   gate_idx_t   next_new_gate_;
   std::vector<gate_idx_t> free_gates_;

@@ -297,6 +297,15 @@ void Pipeline::IdentifyScopeComponent(Module *m, const struct Attribute *attr) {
 
     TraverseDownstream(ogate->igate()->module(), attr);
   }
+
+  for (const IGate *g : m->igates()) {
+      if (g == nullptr) {
+          continue;
+      }
+      for (const auto &og : g->ogates_upstream()) {
+          TraverseUpstream(og->module(), attr);
+      }
+  }
 }
 
 void Pipeline::FillOffsetArrays() {
