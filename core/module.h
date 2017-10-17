@@ -117,6 +117,9 @@ static inline module_init_func_t MODULE_INIT_FUNC(
 
 class Module;
 
+using bess::metadata::Pipeline = Pipeline;
+using bess::metadata::Pipelines = Pipelines;
+
 // Describes a single command that can be issued to a module.
 struct Command {
   enum ThreadSafety { THREAD_UNSAFE = 0, THREAD_SAFE = 1 };
@@ -153,7 +156,7 @@ class ModuleBuilder {
   /* returns a pointer to the created module.
    * if error, returns nullptr and *perr is set */
   Module *CreateModule(const std::string &name,
-                       bess::metadata::Pipeline *pipeline) const;
+                       Pipeline *pipeline) const;
 
   // Add a module to the collection. Returns true on success, false otherwise.
   static bool AddModule(Module *m);
@@ -261,7 +264,7 @@ class alignas(64) Module {
   Module()
       : name_(),
         module_builder_(),
-        pipeline_(),
+        //pipeline_(),
         attrs_(),
         attr_offsets_(),
         tasks_(),
@@ -303,7 +306,8 @@ class alignas(64) Module {
 
   const ModuleBuilder *module_builder() const { return module_builder_; }
 
-  bess::metadata::Pipeline *pipeline() const { return pipeline_; }
+  //bess::metadata::Pipeline *pipeline() const { return pipeline_; }
+  Pipelines const { return pipeline_; }
 
   const std::string &name() const { return name_; }
 
@@ -453,15 +457,18 @@ class alignas(64) Module {
   void set_module_builder(const ModuleBuilder *builder) {
     module_builder_ = builder;
   }
-  void set_pipeline(bess::metadata::Pipeline *pipeline) {
-    pipeline_ = pipeline;
+  void set_pipeline(Pipeline *pipeline) {
+//    pipeline_ = pipeline;
+     if (std::find(pipeline_.begin(), pipeline_.end(), pipeline) == pipeline_.end())
+         pipeline_.push_back(pipeline);
   }
 
   std::string name_;
 
   const ModuleBuilder *module_builder_;
 
-  bess::metadata::Pipeline *pipeline_;
+  //bess::metadata::Pipeline *pipeline_;
+  Pipelines pipeline_;
 
   std::vector<bess::metadata::Attribute> attrs_;
   bess::metadata::mt_offset_t attr_offsets_[bess::metadata::kMaxAttrsPerModule];

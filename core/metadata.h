@@ -212,6 +212,7 @@ class Pipeline {
   std::map<std::string, std::tuple<size_t, int> > registered_attrs_;
 };
 
+typedef std::vector<Pipeline *> Pipelines;
 extern bess::metadata::Pipeline default_pipeline;
 
 }  // namespace metadata
