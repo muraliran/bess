@@ -33,6 +33,7 @@
 
 #include "../module.h"
 #include "../pb/module_msg.pb.h"
+#include "../pb/caese_msg.pb.h"
 #include "../utils/autouuid.h"
 
 #include <map>
@@ -76,6 +77,7 @@ class SmartSwitch final : public Module {
 
   void ProcessBatch(bess::PacketBatch *batch) override;
 
+  CommandResponse CommandAddAttributes(const bess::pb::SmartSwitchCommandAddAttributesArg &arg); 
   CommandResponse CommandAttach(const bess::pb::SmartSwitchCommandAttachArg &arg); 
   CommandResponse CommandDetach(const bess::pb::SmartSwitchCommandDetachArg &arg); 
   CommandResponse CommandQueryGate(const bess::pb::SmartSwitchCommandQueryGateArg &arg);

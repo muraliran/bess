@@ -45,6 +45,7 @@ namespace metadata {
 // TODO: Once the rest of the code supports multiple pipelines, this ought to be
 // a collection of pipelines in bess::metadata a la Ports/Modules.
 Pipeline default_pipeline;
+const char* default_pipeline_id = default_pipeline.pipeline_id();
 
 // Helpers -----------------------------------------------------------------
 
@@ -72,13 +73,15 @@ static void CheckOrphanReaders() {
     }
 
     size_t i = 0;
-    for (const auto &attr : m->all_attrs()) {
-      if (m->attr_offset(i) == kMetadataOffsetNoRead) {
-        LOG(WARNING) << "Metadata attr " << attr.name << "/" << attr.size
-                     << " of module " << m->name() << " has "
-                     << "no upstream module that sets the value!";
+    for (const auto &pp : m->pipelines()) {
+      for (const auto &attr : m->all_attrs(pp)) {
+        if (m->attr_offset(i) == kMetadataOffsetNoRead) {
+          LOG(WARNING) << "Metadata attr " << attr.name << "/" << attr.size
+                       << " of module " << m->name() << " has "
+                       << "no upstream module that sets the value!";
+        }
+        i++;
       }
-      i++;
     }
   }
 }
@@ -142,7 +145,7 @@ int Pipeline::PrepareMetadataComputation() {
     module_scopes_[m] = -1;
     memset(module_components_[m], -1, sizeof(scope_id_t) * kMetadataTotalSize);
 
-    for (const auto &attr : m->all_attrs()) {
+    for (const auto &attr : m->all_attrs(pipeline_id_.c_str())) {
       attr.scope_id = -1;
     }
   }
@@ -180,7 +183,7 @@ void Pipeline::AddModuleToComponent(Module *m, const struct Attribute *attr) {
 
 const struct Attribute *Pipeline::FindAttr(Module *m,
                                            const struct Attribute *attr) const {
-  for (const auto &it : m->all_attrs()) {
+  for (const auto &it : m->all_attrs(pipeline_id_.c_str())) {
     if (get_attr_id(&it) == get_attr_id(attr)) {
       return &it;
     }
@@ -217,9 +220,9 @@ void Pipeline::TraverseUpstream(Module *m, const struct Attribute *attr) {
     }
   }
 
-  if (m->igates().size() == 0) {
-    scope_components_.back().set_invalid(true);
-  }
+  //if (m->igates().size() == 0) {
+    //scope_components_.back().set_invalid(true);
+  //}
 }
 
 int Pipeline::TraverseDownstream(Module *m, const struct Attribute *attr) {
@@ -324,7 +327,7 @@ void Pipeline::FillOffsetArrays() {
 
     for (Module *m : modules) {
       size_t k = 0;
-      for (const auto &attr : m->all_attrs()) {
+      for (const auto &attr : m->all_attrs(pipeline_id_.c_str())) {
         if (get_attr_id(&attr) == id) {
           if (invalid) {
             if (attr.mode == Attribute::AccessMode::kRead) {
@@ -468,17 +471,19 @@ int Pipeline::ComputeMetadataOffsets() {
     }
 
     size_t i = 0;
-    for (const auto &attr : m->all_attrs()) {
-      if (attr.mode == Attribute::AccessMode::kRead ||
-          attr.mode == Attribute::AccessMode::kUpdate) {
-        m->set_attr_offset(i, kMetadataOffsetNoRead);
-      } else if (attr.mode == Attribute::AccessMode::kWrite) {
-        m->set_attr_offset(i, kMetadataOffsetNoWrite);
-        if (attr.scope_id == -1) {
-          IdentifySingleScopeComponent(m, &attr);
+    for (const auto &ppipe : m->pipelines()) {
+      for (const auto &attr : m->all_attrs(ppipe)) {
+        if (attr.mode == Attribute::AccessMode::kRead ||
+            attr.mode == Attribute::AccessMode::kUpdate) {
+          m->set_attr_offset(i, kMetadataOffsetNoRead);
+        } else if (attr.mode == Attribute::AccessMode::kWrite) {
+          m->set_attr_offset(i, kMetadataOffsetNoWrite);
+          if (attr.scope_id == -1) {
+            IdentifySingleScopeComponent(m, &attr);
+          }
         }
+        i++;
       }
-      i++;
     }
   }
 

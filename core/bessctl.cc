@@ -264,28 +264,31 @@ static int collect_ogates(Module* m, GetModuleInfoResponse* response) {
 
 static int collect_metadata(Module* m, GetModuleInfoResponse* response) {
   size_t i = 0;
-  for (const auto& it : m->all_attrs()) {
-    GetModuleInfoResponse_Attribute* attr = response->add_metadata();
+  for (const auto& itp : m->pipelines()) {
+    for (const auto& it : m->all_attrs(itp)) {
+      GetModuleInfoResponse_Attribute* attr = response->add_metadata();
 
-    attr->set_name(it.name);
-    attr->set_size(it.size);
+      attr->set_name(it.name);
+      attr->set_size(it.size);
+      attr->set_pipeline(itp->pipeline_id());
 
-    switch (it.mode) {
-      case bess::metadata::Attribute::AccessMode::kRead:
-        attr->set_mode("read");
-        break;
-      case bess::metadata::Attribute::AccessMode::kWrite:
-        attr->set_mode("write");
-        break;
-      case bess::metadata::Attribute::AccessMode::kUpdate:
-        attr->set_mode("update");
-        break;
-      default:
-        DCHECK(0);
+      switch (it.mode) {
+        case bess::metadata::Attribute::AccessMode::kRead:
+          attr->set_mode("read");
+          break;
+        case bess::metadata::Attribute::AccessMode::kWrite:
+          attr->set_mode("write");
+          break;
+        case bess::metadata::Attribute::AccessMode::kUpdate:
+          attr->set_mode("update");
+          break;
+        default:
+          DCHECK(0);
+      }
+
+      attr->set_offset(m->attr_offset(i));
+      i++;
     }
-
-    attr->set_offset(m->attr_offset(i));
-    i++;
   }
 
   return 0;

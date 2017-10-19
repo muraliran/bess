@@ -68,7 +68,6 @@ packets = [ gen_pkt('10.20.21.11','02:00:00:00:11:01','10.145.72.121','06:16:3e:
 
 # declare smart switch to route after setmetadata
 sm1::SmartSwitch(dp_ids=["1964ddca-91c3-470a-a68b-d15ec9f4123c"])
-
 # L4 protocol and source/destination IP addresses
 # offset 23 - protocol  (tcp 06,  udp 17,  icmp 01)
 # offset 26 src ip
@@ -102,10 +101,10 @@ print( "Gate1: " + str(gate1))
 print("Gate2: " + str(gate2))
 
 # Add full flow
-em1:0 -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
+em1:0 -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,'pipeline':'',\
             'value_bin': b'\x74\xd4\x36\x79\x7c\x00\x49\x27\x91\xdd\x77\x78\x3e\x65\x2f\x63'},\
             {'name':'PortNo','size':1,'value_bin':b'\x01'}]) -> 0:sm1
-em1:1 -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
+em1:1 -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,'pipeline':'',\
             'value_bin': b'\x97\x25\xd4\xf1\xbb\x72\x41\x4a\x8d\xaf\xe7\x0e\x91\x7a\xf6\xa5'},\
             {'name':'PortNo','size':1,'value_bin': b'\x02'}]) -> 0:sm1
                                                                                                                     #
@@ -125,19 +124,27 @@ em1:1 -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
 #pML1_in -> SetMetadata(attrs=[{'name':'PortNo','size':1,'value_int': 0x00}]) -> 1:sm1
 #pML2_in -> SetMetadata(attrs=[{'name':'PortNo','size':1,'value_int': 0x00}]) -> 2:sm1
 
-sm1:1 -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
-           'value_bin': b'\x74\xd4\x36\x79\x7c\x00\x49\x27\x91\xdd\x77\x78\x3e\x65\x2f\x63'},\
-           {'name':'PortNo','size':1,'value_bin':b'\x00'}]) -> pML1_out
-sm1:2 -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
-            'value_bin': b'\x97\x25\xd4\xf1\xbb\x72\x41\x4a\x8d\xaf\xe7\x0e\x91\x7a\xf6\xa5'},\
-             {'name':'PortNo','size':1,'value_bin': b'\x00'}])-> pML2_out
+#sm1:1 -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
+#           'value_bin': b'\x74\xd4\x36\x79\x7c\x00\x49\x27\x91\xdd\x77\x78\x3e\x65\x2f\x63'},\
+#           {'name':'PortNo','size':1,'value_bin':b'\x00'}]) -> pML1_out
+#sm1:2 -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
+#            'value_bin': b'\x97\x25\xd4\xf1\xbb\x72\x41\x4a\x8d\xaf\xe7\x0e\x91\x7a\xf6\xa5'},\
+#             {'name':'PortNo','size':1,'value_bin': b'\x00'}])-> pML2_out
+#
+#pML1_in -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
+#             'value_bin': b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'},\
+#              {'name':'PortNo','size':1,'value_bin':b'\x00'}]) -> 1:sm1
+#pML2_in -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
+#             'value_bin': b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'},\
+#              {'name':'PortNo','size':1,'value_bin':b'\x00'}])-> 2:sm1
+#
+sm1.add_attributes(attributes=[{'name':'Port_ID','size':16,'pipeline':'','mode':'read'},
+                               {'name':'PortNo','size':1,'pipeline':'','mode':'read'}])
+sm1:1 ->  pML1_out
+sm1:2 ->  pML2_out
 
-pML1_in -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
-             'value_bin': b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'},\
-              {'name':'PortNo','size':1,'value_bin':b'\x00'}]) -> 1:sm1
-pML2_in -> SetMetadata(attrs=[{'name':'Port_ID','size': 16,\
-             'value_bin': b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'},\
-              {'name':'PortNo','size':1,'value_bin':b'\x00'}])-> 2:sm1
+pML1_in -> 1:sm1
+pML2_in -> 2:sm1
 
 # in real network, this is the default output port tyically NIC or a gateway
 sm1:0 -> Sink()

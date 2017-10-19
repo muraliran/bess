@@ -61,7 +61,7 @@ class Autouuid {
       uuid_parse(struuid_, uuid_);
 
       return *this;
-      }
+    }
 
     inline bool operator==(const Autouuid &rhs) {
       return std::memcmp(uuid_, rhs.uuid_, 16) == 0 ? true : false;
