@@ -385,10 +385,11 @@ message GetModuleInfoResponse {
     uint64 igate = 7;      /// Input gate ID of the "next" module
   }
   message Attribute {
-    string name = 1;   /// Name of per-packet metadata attribute
-    uint64 size = 2;   /// Size of attribute (in bytes)
-    string mode = 3;   /// "read", "write", or "update"
-    int64 offset = 4;  /// (internal debugging purpose only)
+    string name = 1;         /// Name of per-packet metadata attribute
+    uint64 size = 2;         /// Size of attribute (in bytes)
+    string mode = 3;         /// "read", "write", or "update"
+    string pipeline = 4;     /// id of the pipeline it belongs to
+    int64 offset = 5;        /// (internal debugging purpose only)
   }
   Error error = 1;
   string name = 2;    /// Name of module

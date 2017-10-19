@@ -105,22 +105,24 @@ CommandResponse Pcapng::Init(const bess::Gate *gate,
   int ret;
 
   size_t i = 0;
-  for (const auto &it : m->all_attrs()) {
-    tmpl += it.name + " = ";
+  for (const auto & ppipe : m->pipelines()) {
+    for (const auto &it : m->all_attrs(ppipe)) {
+      tmpl += it.name + " = ";
 
-    size_t tmpl_offset = tmpl.size();
+      size_t tmpl_offset = tmpl.size();
 
-    tmpl += std::string(it.size * 2, 'X') + " ";
+      tmpl += std::string(it.size * 2, 'X') + " ";
 
-    if (tmpl.size() > std::numeric_limits<uint16_t>::max()) {
-      // Doesn't fit in the option string.
-      break;
+      if (tmpl.size() > std::numeric_limits<uint16_t>::max()) {
+        // Doesn't fit in the option string.
+        break;
+      }
+
+      attrs_.emplace_back(Attr{.md_offset = m->attr_offset(i),
+                               .size = it.size,
+                               .tmpl_offset = tmpl_offset});
+      i++;
     }
-
-    attrs_.emplace_back(Attr{.md_offset = m->attr_offset(i),
-                             .size = it.size,
-                             .tmpl_offset = tmpl_offset});
-    i++;
   }
 
   if (!tmpl.empty() && tmpl.back() == ' ') {

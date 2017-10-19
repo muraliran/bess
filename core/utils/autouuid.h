@@ -49,7 +49,7 @@ class Autouuid {
 
     Autouuid(const unsigned char* buf) {
       std::memcpy(uuid_, buf, 16);
-      uuid_unparse_lower( uuid_, struuid_);
+      uuid_unparse( uuid_, struuid_);
     }
 
     Autouuid& operator=( const char* uuid_str ) {
@@ -61,7 +61,7 @@ class Autouuid {
       uuid_parse(struuid_, uuid_);
 
       return *this;
-      }
+    }
 
     inline bool operator==(const Autouuid &rhs) {
       return std::memcmp(uuid_, rhs.uuid_, 16) == 0 ? true : false;

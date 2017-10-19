@@ -48,7 +48,7 @@ sm1::SmartSwitch(dp_ids=["1964ddca-91c3-470a-a68b-d15ec9f4123c"])
 # match based on source IP (L4)
 
 # L4 protocol and source/destination IP addresses
-# offset 23 - protocol
+# offset 23 - protocol  (tcp 06,  udp 17,  icmp 01)
 # offset 26 src ip
 # offset 30 dst ip -- we will only look at dst ip here
 #
@@ -56,7 +56,11 @@ em1::ExactMatch(fields=[{'offset':23, 'num_bytes':1},\
                         {'offset':30, 'num_bytes':4}])
 
 em1.add(fields=[{'value_int':17}, {'value_bin':aton('10.20.21.11')}], gate=0)
+em1.add(fields=[{'value_int':06}, {'value_bin':aton('10.20.21.11')}], gate=0)
+em1.add(fields=[{'value_int':01}, {'value_bin':aton('10.20.21.11')}], gate=0)
 em1.add(fields=[{'value_int':17}, {'value_bin':aton('10.20.21.12')}], gate=1)
+em1.add(fields=[{'value_int':06}, {'value_bin':aton('10.20.21.12')}], gate=1)
+em1.add(fields=[{'value_int':01}, {'value_bin':aton('10.20.21.12')}], gate=1)
 
 p0_in -> em1
 

@@ -363,8 +363,10 @@ void Module::DestroyAllTasks() {
 }
 
 void Module::DeregisterAllAttributes() {
-  for (const auto &it : attrs_) {
-    pipeline_->DeregisterAttribute(it.name);
+  for (const auto &itp : pipelines_) {
+    for (const auto &ita : attrs_[itp]) {
+      itp->DeregisterAttribute(ita.name);
+    }
   }
 }
 
@@ -448,7 +450,8 @@ CheckConstraintResult Module::CheckModuleConstraints() const {
 }
 
 int Module::AddMetadataAttr(const std::string &name, size_t size,
-                            bess::metadata::Attribute::AccessMode mode) {
+                            bess::metadata::Attribute::AccessMode mode,
+                            const char* pipeline) {
   int ret;
 
   if (attrs_.size() >= bess::metadata::kMaxAttrsPerModule)
@@ -460,14 +463,19 @@ int Module::AddMetadataAttr(const std::string &name, size_t size,
   if (size < 1 || size > bess::metadata::kMetadataAttrMaxSize)
     return -EINVAL;
 
+  Pipeline* ppipe = get_pipeline(pipeline);
+  if (!ppipe) {
+    return -EEXIST;
+  }
   // We do not allow a module to have multiple attributes with the same name
-  for (const auto &it : attrs_) {
+  for (const auto &it : all_attrs(ppipe)) {
     if (it.name == name) {
       return -EEXIST;
     }
   }
 
-  if ((ret = pipeline_->RegisterAttribute(name, size))) {
+  //if ((ret = pipeline_->RegisterAttribute(name, size))) {
+  if ((ret = ppipe->RegisterAttribute(name, size))) {
     return ret;
   }
 
@@ -477,7 +485,7 @@ int Module::AddMetadataAttr(const std::string &name, size_t size,
   attr.mode = mode;
   attr.scope_id = -1;
 
-  attrs_.push_back(attr);
+  (attrs_[ppipe]).push_back(attr);
 
   return attrs_.size() - 1;
 }

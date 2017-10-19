@@ -31,10 +31,14 @@
 #include "smart_switch.h"
 #include <algorithm>
 
+//using bess::snbuff_layout::SNBUF_METADATA_OFF;
 
 /**  Module impl   ********************/
 
 const Commands SmartSwitch::cmds = {
+    {"add_attributes", "SmartSwitchCommandAddAttributesArg",
+        MODULE_CMD_FUNC(&SmartSwitch::CommandAddAttributes),
+        Command::THREAD_UNSAFE},
     {"attach", "SmartSwitchCommandAttachArg",
         MODULE_CMD_FUNC(&SmartSwitch::CommandAttach),
         Command::THREAD_UNSAFE},
@@ -52,15 +56,6 @@ CommandResponse SmartSwitch::Init(const bess::pb::SmartSwitchArg &arg) {
     for (int i=0; i < arg.dp_ids_size(); i++) {
         datapaths_.push_back(arg.dp_ids(i));
     }
-
-    port_id_attr_id_ = 0; // port_id is the first metadat offset
-
-//    port_id_attr_id = AddMetadataAttr(PORT_ID_ATTR, PORT_ID_SIZE, 
-//                            bess::metadata::Attribute::AccessMode::kRead);
-//    if (port_id_attr_id < 1) {
-//        return CommandFailure(EINVAL, "Adding attribute PORT_ID failed");
-//    }
-
     return CommandSuccess();
 }
 
@@ -76,30 +71,78 @@ void SmartSwitch::ProcessBatch(bess::PacketBatch *batch) {
     gate_idx_t default_gate = ACCESS_ONCE(kDefaultGate);
     gate_idx_t out_gates[bess::PacketBatch::kMaxBurst];
 
-    for (int i=0; i < batch->cnt(); i++) {
+    int cnt = batch->cnt();
+
+    for (int i=0; i < cnt; i++) {
         out_gates[i] = default_gate;
 
-        // set pointer to metadata buf
-        int offset = bess::Packet::mt_offset_to_databuf_offset(attr_offset(port_id_attr_id_));
-        char *buf_addr = reinterpret_cast<char *>(batch->pkts()[i]->buffer());
-        buf_addr +=  batch->pkts()[i]->data_off();
-        buf_addr += offset;
-        bess::utils::Autouuid portid(reinterpret_cast<unsigned char*>(buf_addr));
-        const char* port_id = portid.get_struuid();
-        out_gates[i] = port_table_[port_id]; 
+        bess::Packet *pkt = batch->pkts()[i];
+        uint8_t* buf_port_id = get_attr<uint8_t*>(this, 0, pkt);
+        
+        // TODO: fix the 16 byte retrieval above
+        buf_port_id=0;  // workaround
+
+        int8_t gate_no = -1;
+        if (buf_port_id) {
+            bess::utils::Autouuid portid(buf_port_id);
+            gate_no =  port_table_[portid.get_struuid()];
+        }
+        const uint8_t port_no = get_attr<uint8_t>(this, 1, pkt);
+        if (gate_no < 0)
+            out_gates[i] = port_no;
+        else
+            out_gates[i] = gate_no;
     }
     RunSplit(out_gates, batch);
+}
+
+CommandResponse SmartSwitch::CommandAddAttributes(
+        const bess::pb::SmartSwitchCommandAddAttributesArg & arg) {
+
+    using AccessMode = bess::metadata::Attribute::AccessMode;
+    AccessMode mode;
+    int attr_id;
+    for ( int i = 0; i < arg.attributes_size(); i++) {
+        const auto& attr = arg.attributes(i);
+        if (attr.mode() == "read") {
+            mode = AccessMode::kRead;
+        } else if (attr.mode() == "write") {
+            mode = AccessMode::kWrite;
+        } else if (attr.mode() == "update") {
+            mode = AccessMode::kUpdate;
+        } else {
+            return CommandFailure(EINVAL, "Invalid mode for attribute: %s", attr.mode().c_str());
+        }
+        size_t sz = reinterpret_cast<size_t>(attr.size());
+        const char* p_id = (attr.pipeline().length() == 0) ?\
+                           bess::metadata::default_pipeline_id :\
+                           attr.pipeline().c_str();
+        attr_id = AddMetadataAttr(attr.name(), sz, mode, p_id);
+        if (attr_id < 0) {
+            return CommandFailure(EINVAL, "Adding attribute %s failed with attr_id = %d", attr.name().c_str(), attr_id);
+        }
+    }
+    return CommandSuccess();
 }
 
 CommandResponse SmartSwitch::CommandAttach(
         const bess::pb::SmartSwitchCommandAttachArg & arg) {
     // attach will send a response containing gate number
     bess::pb::SmartSwitchCommandAttachResponse resp;
-    if ( std::find(datapaths_.begin(), datapaths_.end(), arg.dp_id()) ==
-            datapaths_.end()) {
-        return CommandFailure(ENOENT, "datapath %s not found in the switch",
+
+    // check if dp assigned to this switch
+    bool bValidDP = false;
+    for (const auto& it : datapaths_) {
+        if (it == arg.dp_id()) {
+            bValidDP = true;
+            break;
+        }
+    }
+    if (!bValidDP) {
+        return CommandFailure(ENOENT, "datapath %s not assigned to this switch",
                                         arg.dp_id().c_str());
     }
+
     if (next_new_gate_ < kNumGates) {
         port_table_[arg.port_id()] = next_new_gate_;
         resp.set_gate(next_new_gate_);
@@ -120,7 +163,7 @@ CommandResponse SmartSwitch::CommandAttach(
 
 CommandResponse SmartSwitch::CommandDetach(
         const bess::pb::SmartSwitchCommandDetachArg & arg) {
-    guid_int_map::iterator it;
+    str_int_map::iterator it;
     if ((std::find(datapaths_.begin(), datapaths_.end(), arg.dp_id()) !=
              datapaths_.end()) ||
             (it = port_table_.find(arg.port_id())) !=  port_table_.end()) {
@@ -136,7 +179,7 @@ CommandResponse SmartSwitch::CommandDetach(
 
 CommandResponse SmartSwitch::CommandQueryGate(
         const bess::pb::SmartSwitchCommandQueryGateArg & arg) {
-    guid_int_map::iterator it;
+    str_int_map::iterator it;
     bess::pb::SmartSwitchCommandQueryGateResponse resp;
     if ((it = port_table_.find(arg.port_id())) !=  port_table_.end()) {
         resp.set_gate(it->second);
