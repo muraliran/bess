@@ -36,11 +36,10 @@ fib::L2Forward()
 fib.add(entries=[{'addr':'02:00:00:00:11:01', 'gate':0}])
 fib.add(entries=[{'addr':'02:00:00:00:11:02', 'gate':1}])
 fib.add(entries=[{'addr':'ff:ff:ff:ff:ff:ff', 'gate':2}])
+fib.add(entries=[{'addr':'02:00:00:00:11:03', 'gate':3}])
 fib.add(entries=[{'addr':'02:00:00:00:11:04', 'gate':3}])
-fib.add(entries=[{'addr':'02:00:00:00:11:05', 'gate':3}])
 
 repl::Replicate(gates=[0,1,2])
-#repl.set_gates(gates=range(2))
 repl:0 -> pML1_out
 repl:1 -> pML2_out
 repl:2 -> p0_out
@@ -57,9 +56,9 @@ fib:3 -> p0_out
 bess.resume_all()
 
 # wait for user command to exit
-usercmd = "dontexit"
-while (usercmd != "exit"):
-     usercmd = raw_input("After test complete type 'exit': ")
-
-bess.pause_all()
-bess.reset_all()
+#usercmd = "dontexit"
+#while (usercmd != "exit"):
+#     usercmd = raw_input("After test complete type 'exit': ")
+#
+#bess.pause_all()
+#bess.reset_all()
