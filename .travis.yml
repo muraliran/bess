@@ -43,7 +43,8 @@ install:
   - "[[ ${DEBUG:-0} == 0 ]] || sudo apt-get install -y g++-5"  # install gcov-5
   - "[[ ${SANITIZE:-0} == 0 ]] || sudo apt-get install -y llvm-3.8"
   - "[[ $TAG_SUFFIX != _32 ]] || sudo apt-get install -y lib32gcc1"
-  - ln -s /build/dpdk-17.05 deps
+  # HOTFIX: do not use prebuilt DPDK binary, in case Travis VM runs on an old processor
+  # - ln -s /build/dpdk-17.05 deps
   - "docker pull nefelinetworks/bess_build:latest${TAG_SUFFIX} | cat"  # cat suppresses progress bars
 
 before_script:
@@ -53,13 +54,14 @@ before_script:
   - export CC=$VER_CC
 
 script:
-  - ./container_build.py bess
+  # travis_wait extends the 10-min timeout to 20mins.
+  - travis_wait ./container_build.py bess
   - ./container_build.py kmod_buildtest
   - (cd core && ./all_test --gtest_shuffle)  # TcpFlowReconstructTest requires working directory to be `core/`
   - coverage2 run -m unittest discover -v
   - "[[ ${DEBUG:-0} == 0 ]] || coverage3 run -m unittest discover -v"
-  - python2 bessctl/bessctl -- daemon start -- run testing/run_module_tests
-  - "[[ ${DEBUG:-0} == 0 ]] || python3 bessctl/bessctl -- daemon start -- run testing/run_module_tests"
+  - python2 bessctl/run_module_tests.py
+  - "[[ ${DEBUG:-0} == 0 ]] || python3 bessctl/run_module_tests.py"
 
 after_success:
   - bessctl/bessctl daemon stop # flush out the coverage data
@@ -67,7 +69,7 @@ after_success:
 
 after_failure:
   - more /tmp/bessd.*.INFO.* | cat      # dump all bessd log files
-  - more /tmp/sanitizer* | cat          # dump all sanitizer results
+  - sudo more /tmp/sanitizer* | cat          # dump all sanitizer results
 
 before_deploy:
   - for arch in core2 sandybridge haswell; do

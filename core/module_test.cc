@@ -28,6 +28,7 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include "module.h"
+#include "module_graph.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -47,9 +48,7 @@ class AcmeModule : public Module {
 
   static const Commands cmds;
 
-  CommandResponse Init(const bess::pb::EmptyArg &) {
-    return CommandFailure(42);
-  }
+  CommandResponse Init(const bess::pb::EmptyArg &) { return CommandResponse(); }
 
   CommandResponse FooPb(const bess::pb::EmptyArg &) {
     n += 1;
@@ -88,71 +87,71 @@ class ModuleTester : public ::testing::Test {
 
   virtual void SetUp() {}
 
-  virtual void TearDown() { ModuleBuilder::DestroyAllModules(); }
+  virtual void TearDown() { ModuleGraph::DestroyAllModules(); }
 
   AcmeModule_class AcmeModule_singleton;
   AcmeModuleWithTask_class AcmeModuleWithTask_singleton;
 };
 
-int create_acme(const char *name, Module **m) {
+Module *create_acme(const char *name, pb_error_t *perr) {
   const ModuleBuilder &builder =
       ModuleBuilder::all_module_builders().find("AcmeModule")->second;
 
   std::string mod_name;
   if (name) {
-    if (ModuleBuilder::all_modules().count(name)) {
-      return EEXIST;
+    if (ModuleGraph::GetAllModules().count(name)) {
+      *perr = pb_errno(EEXIST);
+      return nullptr;
     }
     mod_name = name;
   } else {
-    mod_name = ModuleBuilder::GenerateDefaultName(builder.class_name(),
-                                                  builder.name_template());
+    mod_name = ModuleGraph::GenerateDefaultName(builder.class_name(),
+                                                builder.name_template());
   }
-
-  *m = builder.CreateModule(mod_name, &bess::metadata::default_pipeline);
 
   bess::pb::EmptyArg arg_;
   google::protobuf::Any arg;
   arg.PackFrom(arg_);
-  CommandResponse ret = (*m)->InitWithGenericArg(arg);
-  EXPECT_EQ(42, ret.error().code());
 
-  if (!ModuleBuilder::AddModule(*m)) {
-    return 1;
+  Module *m = ModuleGraph::CreateModule(builder, mod_name, arg, perr);
+
+  if (!m) {
+    return nullptr;
   }
+  EXPECT_EQ(0, perr->code());
 
   EXPECT_EQ("AcmeModule", builder.class_name());
   EXPECT_EQ("acme_module", builder.name_template());
   EXPECT_EQ("foo bar", builder.help_text());
   EXPECT_EQ(1, builder.cmds().size());
 
-  return 0;
+  return m;
 }
 
-int create_acme_with_task(const char *name, Module **m) {
+Module *create_acme_with_task(const char *name, pb_error_t *perr) {
   const ModuleBuilder &builder =
       ModuleBuilder::all_module_builders().find("AcmeModuleWithTask")->second;
 
-  if (ModuleBuilder::all_modules().count(name)) {
-    return EEXIST;
+  if (ModuleGraph::GetAllModules().count(name)) {
+    *perr = pb_errno(EEXIST);
+    return nullptr;
   }
 
-  *m = builder.CreateModule(name, &bess::metadata::default_pipeline);
   bess::pb::EmptyArg arg_;
   google::protobuf::Any arg;
   arg.PackFrom(arg_);
-  CommandResponse ret = (*m)->InitWithGenericArg(arg);
-  EXPECT_EQ(0, ret.error().code());
 
-  if (!ModuleBuilder::AddModule(*m)) {
-    return 1;
+  Module *m = ModuleGraph::CreateModule(builder, name, arg, perr);
+  if (!m) {
+    return nullptr;
   }
+  EXPECT_EQ(0, perr->code());
 
   EXPECT_EQ("AcmeModuleWithTask", builder.class_name());
   EXPECT_EQ("acme_module_with_task", builder.name_template());
   EXPECT_EQ("foo bar", builder.help_text());
 
-  return 0;
+  return m;
 }
 
 // Check that new module classes are actually created correctly and stored in
@@ -193,34 +192,32 @@ TEST(ModuleBuilderTest, RegisterModuleClass) {
 
 // Check that module builders create modules correctly when given a name
 TEST_F(ModuleTester, CreateModuleWithName) {
-  Module *m1, *m2;
+  pb_error_t perr;
 
-  EXPECT_EQ(0, create_acme("bar", &m1));
-  ASSERT_NE(nullptr, m1);
-  EXPECT_EQ(1, ModuleBuilder::all_modules().size());
-  EXPECT_EQ(EEXIST, create_acme("bar", &m2));
-  EXPECT_EQ(1, ModuleBuilder::all_modules().count("bar"));
+  ASSERT_NE(nullptr, create_acme("bar", &perr));
+  EXPECT_EQ(1, ModuleGraph::GetAllModules().size());
+  ASSERT_EQ(nullptr, create_acme("bar", &perr));
+  EXPECT_EQ(EEXIST, perr.code());
+  EXPECT_EQ(1, ModuleGraph::GetAllModules().count("bar"));
 }
 
 // Check that module builders create modules with generated names
 TEST_F(ModuleTester, CreateModuleGenerateName) {
-  Module *m;
+  pb_error_t perr;
 
-  EXPECT_EQ(0, create_acme(nullptr, &m));
-  ASSERT_NE(nullptr, m);
-  EXPECT_EQ(1, ModuleBuilder::all_modules().size());
-  EXPECT_EQ(1, ModuleBuilder::all_modules().count("acme_module0"));
-  EXPECT_EQ(0, create_acme(nullptr, &m));
-  ASSERT_NE(nullptr, m);
-  EXPECT_EQ(2, ModuleBuilder::all_modules().size());
-  EXPECT_EQ(1, ModuleBuilder::all_modules().count("acme_module1"));
+  ASSERT_NE(nullptr, create_acme(nullptr, &perr));
+  EXPECT_EQ(1, ModuleGraph::GetAllModules().size());
+  EXPECT_EQ(1, ModuleGraph::GetAllModules().count("acme_module0"));
+  ASSERT_NE(nullptr, create_acme(nullptr, &perr));
+  EXPECT_EQ(2, ModuleGraph::GetAllModules().size());
+  EXPECT_EQ(1, ModuleGraph::GetAllModules().count("acme_module1"));
 }
 
 TEST_F(ModuleTester, RunCommand) {
   Module *m;
+  pb_error_t perr;
 
-  EXPECT_EQ(0, create_acme(nullptr, &m));
-  ASSERT_NE(nullptr, m);
+  ASSERT_NE(nullptr, m = create_acme(nullptr, &perr));
   bess::pb::EmptyArg arg_;
   google::protobuf::Any arg;
   arg.PackFrom(arg_);
@@ -238,12 +235,11 @@ TEST_F(ModuleTester, RunCommand) {
 }
 
 TEST_F(ModuleTester, ConnectModules) {
+  pb_error_t perr;
   Module *m1, *m2;
 
-  EXPECT_EQ(0, create_acme("m1", &m1));
-  ASSERT_NE(nullptr, m1);
-  EXPECT_EQ(0, create_acme("m2", &m2));
-  ASSERT_NE(nullptr, m2);
+  ASSERT_NE(nullptr, m1 = create_acme("m1", &perr));
+  ASSERT_NE(nullptr, m2 = create_acme("m2", &perr));
 
   EXPECT_EQ(0, m1->ConnectModules(0, m2, 0));
   EXPECT_EQ(1, m1->ogates().size());
@@ -257,30 +253,32 @@ TEST_F(ModuleTester, ConnectModules) {
 }
 
 TEST_F(ModuleTester, ResetModules) {
-  Module *m;
+  pb_error_t perr;
 
   for (int i = 0; i < 10; i++) {
-    EXPECT_EQ(0, create_acme(nullptr, &m));
-    ASSERT_NE(nullptr, m);
+    ASSERT_NE(nullptr, create_acme(nullptr, &perr));
   }
-  EXPECT_EQ(10, ModuleBuilder::all_modules().size());
+  EXPECT_EQ(10, ModuleGraph::GetAllModules().size());
 
-  ModuleBuilder::DestroyAllModules();
-  EXPECT_EQ(0, ModuleBuilder::all_modules().size());
+  ModuleGraph::DestroyAllModules();
+  EXPECT_EQ(0, ModuleGraph::GetAllModules().size());
 }
 
 TEST(ModuleBuilderTest, GenerateDefaultNameTemplate) {
-  std::string name1 = ModuleBuilder::GenerateDefaultName("FooBar", "foo");
+  std::string name1 = ModuleGraph::GenerateDefaultName("FooBar", "foo");
   EXPECT_EQ("foo0", name1);
 
-  std::string name2 = ModuleBuilder::GenerateDefaultName("FooBar", "");
+  std::string name2 = ModuleGraph::GenerateDefaultName("FooBar", "");
   EXPECT_EQ("foo_bar0", name2);
 
-  std::string name3 = ModuleBuilder::GenerateDefaultName("FooABCBar", "");
+  std::string name3 = ModuleGraph::GenerateDefaultName("FooABCBar", "");
   EXPECT_EQ("foo_abcbar0", name3);
 }
 
 TEST_F(ModuleTester, GenerateTCGraph) {
+  pb_error_t perr;
+  Module *t1, *t2, *t3, *t4, *m1, *m2, *m3;
+
   /* Test Topology           Expected TCGraph
    *       t2
    *      /
@@ -294,14 +292,13 @@ TEST_F(ModuleTester, GenerateTCGraph) {
    *         \
    *          t4
    */
-  Module *t1, *t2, *t3, *t4, *m1, *m2, *m3;
-  EXPECT_EQ(0, create_acme("m1", &m1));
-  EXPECT_EQ(0, create_acme("m2", &m2));
-  EXPECT_EQ(0, create_acme("m3", &m3));
-  EXPECT_EQ(0, create_acme_with_task("t1", &t1));
-  EXPECT_EQ(0, create_acme_with_task("t2", &t2));
-  EXPECT_EQ(0, create_acme_with_task("t3", &t3));
-  EXPECT_EQ(0, create_acme_with_task("t4", &t4));
+  ASSERT_NE(nullptr, m1 = create_acme("m1", &perr));
+  ASSERT_NE(nullptr, m2 = create_acme("m2", &perr));
+  ASSERT_NE(nullptr, m3 = create_acme("m3", &perr));
+  ASSERT_NE(nullptr, t1 = create_acme_with_task("t1", &perr));
+  ASSERT_NE(nullptr, t2 = create_acme_with_task("t2", &perr));
+  ASSERT_NE(nullptr, t3 = create_acme_with_task("t3", &perr));
+  ASSERT_NE(nullptr, t4 = create_acme_with_task("t4", &perr));
   EXPECT_EQ(0, t1->ConnectModules(0, m1, 0));
   EXPECT_EQ(0, t1->ConnectModules(1, m2, 0));
   EXPECT_EQ(0, m1->ConnectModules(0, t2, 0));
@@ -325,7 +322,7 @@ TEST_F(ModuleTester, GenerateTCGraph) {
   t4->SignalUnderload();
   ASSERT_EQ(0, t1->children_overload());
 
-  ModuleBuilder::DestroyModule(t1, true);
+  ModuleGraph::DestroyModule(t1, true);
   EXPECT_EQ(0, t2->parent_tasks().size());
   EXPECT_EQ(0, t3->parent_tasks().size());
   EXPECT_EQ(0, t4->parent_tasks().size());

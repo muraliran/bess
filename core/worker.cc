@@ -48,6 +48,8 @@
 #include "module.h"
 #include "opts.h"
 #include "packet.h"
+#include "resume_hook.h"
+#include "resume_hooks/metadata.h"
 #include "scheduler.h"
 #include "utils/random.h"
 #include "utils/time.h"
@@ -62,22 +64,17 @@ Worker *volatile workers[Worker::kMaxWorkers];
 
 using bess::TrafficClassBuilder;
 using namespace bess::traffic_class_initializer_types;
-using bess::PriorityTrafficClass;
-using bess::WeightedFairTrafficClass;
-using bess::RoundRobinTrafficClass;
-using bess::RateLimitTrafficClass;
-using bess::LeafTrafficClass;
+using bess::ResumeHookFactory;
 
 std::list<std::pair<int, bess::TrafficClass *>> orphan_tcs;
 
 // See worker.h
 __thread Worker ctx;
 
-template <typename CallableTask>
 struct thread_arg {
   int wid;
   int core;
-  Scheduler<CallableTask> *scheduler;
+  Scheduler *scheduler;
 };
 
 #define SYS_CPU_DIR "/sys/devices/system/cpu/cpu%u"
@@ -177,9 +174,9 @@ void resume_all_workers() {
     }
   }
 
-  bess::metadata::default_pipeline.ComputeMetadataOffsets();
-  for (int wid = 0; wid < Worker::kMaxWorkers; wid++)
+  for (int wid = 0; wid < Worker::kMaxWorkers; wid++) {
     resume_worker(wid);
+  }
 }
 
 void destroy_worker(int wid) {
@@ -199,11 +196,25 @@ void destroy_worker(int wid) {
 
     num_workers--;
   }
+
+  if (num_workers > 0) {
+    return;
+  }
+
+  auto &hooks = bess::global_resume_hooks;
+  for (auto it = hooks.begin(); it != hooks.end();) {
+    if ((*it)->is_default()) {
+      it++;
+    } else {
+      it = hooks.erase(it);
+    }
+  }
 }
 
 void destroy_all_workers() {
-  for (int wid = 0; wid < Worker::kMaxWorkers; wid++)
+  for (int wid = 0; wid < Worker::kMaxWorkers; wid++) {
     destroy_worker(wid);
+  }
 }
 
 bool is_any_worker_running() {
@@ -265,7 +276,7 @@ int Worker::BlockWorker() {
 
 /* The entry point of worker threads */
 void *Worker::Run(void *_arg) {
-  struct thread_arg<Task> *arg = (struct thread_arg<Task> *)_arg;
+  struct thread_arg *arg = (struct thread_arg *)_arg;
   rand_ = new Random();
 
   cpu_set_t set;
@@ -322,13 +333,11 @@ void *run_worker(void *_arg) {
 
 void launch_worker(int wid, int core,
                    [[maybe_unused]] const std::string &scheduler) {
-  struct thread_arg<Task> arg = {
-    .wid = wid, .core = core, .scheduler = nullptr
-  };
+  struct thread_arg arg = {.wid = wid, .core = core, .scheduler = nullptr};
   if (scheduler == "") {
-    arg.scheduler = new DefaultScheduler<Task>();
+    arg.scheduler = new DefaultScheduler();
   } else if (scheduler == "experimental") {
-    arg.scheduler = new ExperimentalScheduler<Task>();
+    arg.scheduler = new ExperimentalScheduler();
   } else {
     CHECK(false) << "Scheduler " << scheduler << " is invalid.";
   }
@@ -407,16 +416,33 @@ WorkerPauser::WorkerPauser() {
   if (is_any_worker_running()) {
     for (int wid = 0; wid < Worker::kMaxWorkers; wid++) {
       if (is_worker_running(wid)) {
-	workers_paused_.push_back(wid);
-	VLOG(1) << "*** Pausing Worker " << wid << " ***";
-	pause_worker(wid);
-	}
+        workers_paused_.push_back(wid);
+        VLOG(1) << "*** Pausing Worker " << wid << " ***";
+        pause_worker(wid);
+      }
     }
   }
 }
 
-WorkerPauser:: ~WorkerPauser() {
+WorkerPauser::~WorkerPauser() {
+  attach_orphans(); // All workers should be paused at this point.
+
+  if (!workers_paused_.empty()) {
+    bess::run_global_resume_hooks(false);
+  }
+
+  std::set<Module *> modules_run;
   for (int wid : workers_paused_) {
+    auto &resume_modules = bess::event_modules[bess::Event::PreResume];
+    for (Module *m : resume_modules) {
+      if (!modules_run.count(m) && m->active_workers()[wid]) {
+        int ret = m->OnEvent(bess::Event::PreResume);
+        modules_run.insert(m);
+        if (ret == -ENOTSUP) {
+          resume_modules.erase(m);
+        }
+      }
+    }
     resume_worker(wid);
     VLOG(1) << "*** Worker " << wid << " Resumed ***";
   }

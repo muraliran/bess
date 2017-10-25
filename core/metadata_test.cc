@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "module.h"
+#include "module_graph.h"
 
 namespace {
 
@@ -54,16 +55,19 @@ Module *create_foo(const std::string name = "") {
       ModuleBuilder::all_module_builders().find("Foo")->second;
 
   Module *m;
-  if (name.size() == 0) {
-    const std::string &mod_name = ModuleBuilder::GenerateDefaultName(
-        builder.class_name(), builder.name_template());
+  pb_error_t perr;
 
-    m = builder.CreateModule(mod_name, &bess::metadata::default_pipeline);
+  bess::pb::EmptyArg arg_;
+  google::protobuf::Any arg;
+  arg.PackFrom(arg_);
+
+  if (name.size() == 0) {
+    const std::string &mod_name = ModuleGraph::GenerateDefaultName(
+        builder.class_name(), builder.name_template());
+    m = ModuleGraph::CreateModule(builder, mod_name, arg, &perr);
   } else {
-    m = builder.CreateModule(std::string(name),
-                             &bess::metadata::default_pipeline);
+    m = ModuleGraph::CreateModule(builder, name, arg, &perr);
   }
-  ModuleBuilder::AddModule(m);
 
   return m;
 }
@@ -88,7 +92,7 @@ class MetadataTest : public ::testing::Test {
     ASSERT_TRUE(m1);
   }
 
-  virtual void TearDown() { ModuleBuilder::DestroyAllModules(); }
+  virtual void TearDown() { ModuleGraph::DestroyAllModules(); }
 
   Module *m0;
   Module *m1;
@@ -212,7 +216,7 @@ TEST_F(MetadataTest, MultipeAttrSimplePipe) {
 }
 
 TEST_F(MetadataTest, MultipeAttrComplexPipe) {
-  ModuleBuilder::DestroyAllModules();
+  ModuleGraph::DestroyAllModules();
   std::vector<Module *> mods;
   for (int i = 0; i < 10; i++) {
     mods.push_back(create_foo());
@@ -291,7 +295,7 @@ TEST_F(MetadataTest, MultipeAttrComplexPipe) {
 // to each metadata attribute. ComputeMetadataOffsets() should sort them before
 // handing them to AssignOffsets(). If it doesn't, bad things happen.
 TEST_F(MetadataTest, ScopeComponentDegreeOrder) {
-  ModuleBuilder::DestroyAllModules();
+  ModuleGraph::DestroyAllModules();
   m0 = create_foo("foo5");
   m1 = create_foo("foo3");
   Module *m2 = create_foo("foo6");

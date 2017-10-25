@@ -32,8 +32,8 @@
 
 #include <gtest/gtest.h>
 
-#include "hooks/tcpdump.h"
-#include "hooks/track.h"
+#include "gate_hooks/tcpdump.h"
+#include "gate_hooks/track.h"
 #include "module.h"
 #include "pktbatch.h"
 
@@ -42,8 +42,8 @@ namespace bess {
 class GateTest : public ::testing::Test {
  protected:
   virtual void SetUp() {
-    g = new Gate(nullptr, 0, nullptr);
-    ASSERT_EQ(nullptr, g->arg());
+    g = new Gate(nullptr, 0);
+    ASSERT_NE(nullptr, g);
   }
 
   virtual void TearDown() { delete g; }
@@ -55,14 +55,12 @@ class IOGateTest : public ::testing::Test {
  protected:
   virtual void SetUp() {
     og = new OGate(nullptr, 0, nullptr);
-    ig = new IGate(nullptr, 0, nullptr);
+    ig = new IGate(nullptr, 0);
     ASSERT_NE(nullptr, og);
     ASSERT_NE(nullptr, ig);
   }
 
   virtual void TearDown() {
-    og->ClearHooks();
-    ig->ClearHooks();
     delete og;
     delete ig;
   }
