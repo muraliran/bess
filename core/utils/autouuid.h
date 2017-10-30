@@ -52,6 +52,10 @@ class Autouuid {
       uuid_unparse( uuid_, struuid_);
     }
 
+    Autouuid(const std::string &struuid) {
+        Autouuid(struuid.c_str());
+    }
+
     Autouuid& operator=( const char* uuid_str ) {
       if (!uuid_str || strlen(uuid_str) != 36){
           // Todo: raise exception
