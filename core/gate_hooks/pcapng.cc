@@ -105,8 +105,9 @@ CommandResponse Pcapng::Init(const bess::Gate *gate,
   int ret;
 
   size_t i = 0;
-  for (const auto & ppipe : m->pipelines()) {
-    for (const auto &it : m->all_attrs(ppipe)) {
+  //for (const auto & ppipe : m->pipelines()) {
+    //for (const auto &it : m->all_attrs(ppipe)) {
+    for (const auto &it : m->all_attrs()) {
       tmpl += it.name + " = ";
 
       size_t tmpl_offset = tmpl.size();
@@ -123,7 +124,7 @@ CommandResponse Pcapng::Init(const bess::Gate *gate,
                                .tmpl_offset = tmpl_offset});
       i++;
     }
-  }
+  //}
 
   if (!tmpl.empty() && tmpl.back() == ' ') {
     tmpl.pop_back();

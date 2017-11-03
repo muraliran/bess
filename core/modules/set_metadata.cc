@@ -84,7 +84,7 @@ static void CopyFromValue(bess::PacketBatch *batch, const struct Attr *attr,
 CommandResponse SetMetadata::AddAttrOne(
     const bess::pb::SetMetadataArg_Attribute &attr) {
   std::string name;
-  const char* pipeline;
+  //const char* pipeline;
   size_t size = 0;
   int offset = -1;
   int rshift_bytes = attr.rshift_bits() / 8;
@@ -99,9 +99,9 @@ CommandResponse SetMetadata::AddAttrOne(
   }
   name = attr.name();
   size = attr.size();
-  pipeline = (attr.pipeline().length() == 0) ?\
-                bess::metadata::default_pipeline_id :\
-                attr.pipeline().c_str();
+  //pipeline = (attr.pipeline().length() == 0) ?
+  //              bess::metadata::default_pipeline_id :
+  //              attr.pipeline().c_str();
   do_mask = attr.mask().length() > 0;
 
   if (size < 1 || size > kMetadataAttrMaxSize) {
@@ -165,8 +165,8 @@ CommandResponse SetMetadata::AddAttrOne(
   }
 
   ret = AddMetadataAttr(name, size,
-                        bess::metadata::Attribute::AccessMode::kWrite,
-                        pipeline);
+                        bess::metadata::Attribute::AccessMode::kWrite);
+                        //pipeline);
   if (ret < 0) {
     return CommandFailure(-ret, "add_metadata_attr() failed");
   }

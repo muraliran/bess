@@ -83,7 +83,7 @@ static inline module_init_func_t MODULE_INIT_FUNC(
 class Module;
 
 using bess::metadata::Pipeline;
-using bess::metadata::Pipelines;
+//using bess::metadata::Pipelines;
 
 // Describes a single command that can be issued to a module.
 struct Command {
@@ -139,9 +139,9 @@ class ModuleBuilder {
   * returns an instance of a pipeline object
   * A module may support one or more pipelines
   * */
-  Pipeline *CreatePipeline(const std::string &name) const;
+  //Pipeline *CreatePipeline(const std::string &name) const;
 
-  static const std::map<std::string, Pipeline *> &all_pipelines();
+  //static const std::map<std::string, Pipeline *> &all_pipelines();
   // -- muralir--
 
   /* returns a pointer to the created module */
@@ -171,7 +171,7 @@ class ModuleBuilder {
   const std::function<Module *()> module_generator_;
 
   // -- muralir ---
-  static std::map<std::string, Pipeline *> all_pipelines_;
+  //static std::map<std::string, Pipeline *> all_pipelines_;
   // -- muralir ---
 
   const gate_idx_t num_igates_;
@@ -208,7 +208,8 @@ class alignas(64) Module {
   Module()
       : name_(),
         module_builder_(),
-        pipelines_(),
+        //pipelines_(),
+        pipeline_(),
         attrs_(),
         attr_offsets_(),
         tasks_(),
@@ -259,16 +260,16 @@ class alignas(64) Module {
 
   const ModuleBuilder *module_builder() const { return module_builder_; }
 
-  //bess::metadata::Pipeline *pipeline() const { return pipeline_; }
-  Pipelines pipelines() const { return pipelines_; }
-  Pipeline* get_pipeline( const char* pp_id) {
-      for (const auto& it : pipelines_) {
-          if (!strcmp(it->pipeline_id(), pp_id)) {
-              return it;
-          }
-      }
-      return nullptr;
-  }
+  bess::metadata::Pipeline *pipeline() const { return pipeline_; }
+  //Pipelines pipelines() const { return pipelines_; }
+  //Pipeline* get_pipeline( const char* pp_id) {
+  //    for (const auto& it : pipelines_) {
+  //        if (!strcmp(it->pipeline_id(), pp_id)) {
+  //            return it;
+  //        }
+  //    }
+  //    return nullptr;
+  //}
 
   const std::string &name() const { return name_; }
 
@@ -314,13 +315,13 @@ class alignas(64) Module {
    *
    * Returns its allocated ID (>= 0), or a negative number for error */
   int AddMetadataAttr(const std::string &name, size_t size,
-                      bess::metadata::Attribute::AccessMode mode,
-                      const char* pipeline);
+                      bess::metadata::Attribute::AccessMode mode);
+   //                   const char* pipeline);
   // for backward compatibility
-  int AddMetadataAttr(const std::string &name, size_t size,
-                      bess::metadata::Attribute::AccessMode mode) {
-      return AddMetadataAttr( name, size, mode, bess::metadata::default_pipeline_id); 
-  }
+  //int AddMetadataAttr(const std::string &name, size_t size,
+  //                    bess::metadata::Attribute::AccessMode mode) {
+  //    return AddMetadataAttr( name, size, mode, bess::metadata::default_pipeline_id); 
+  //}
 
   CommandResponse RunCommand(const std::string &cmd,
                              const google::protobuf::Any &arg) {
@@ -328,27 +329,30 @@ class alignas(64) Module {
   }
 
   // for backward compatibility - phaseout once pipeline used
-  const Attributes all_attrs() {
-      return all_attrs(bess::metadata::default_pipeline_id);
-  }
+  //const Attributes all_attrs() {
+  //    return all_attrs(bess::metadata::default_pipeline_id);
+  //}
 
   // helper to get pipeline ptr
-  const Attributes all_attrs(const char* pipe_id) {
-    Pipeline* pp = get_pipeline(pipe_id);
-    if (!pp) {
-      return Attributes();
-    }
-    return all_attrs(pp);
+  //const Attributes all_attrs(const char* pipe_id) {
+  //  Pipeline* pp = get_pipeline(pipe_id);
+  //  if (!pp) {
+  //    return Attributes();
+  //  }
+  //  return all_attrs(pp);
+  //}
+  const std::vector<bess::metadata::Attribute> &all_attrs() const {
+    return attrs_;
   }
 
   // Attributes are scoped to pipeline and then to a scope component
-  const Attributes all_attrs(Pipeline* p) const {
-    for (const auto& it : attrs_) {
-      if (it.first == p)
-        return it.second;
-    }
-    return Attributes();
-  }
+  //const Attributes all_attrs(Pipeline* p) const {
+  //  for (const auto& it : attrs_) {
+  //    if (it.first == p)
+  //      return it.second;
+  //  }
+  //  return Attributes();
+  //}
 
   const std::vector<const Task *> &tasks() const { return tasks_; }
 
@@ -454,20 +458,20 @@ class alignas(64) Module {
     module_builder_ = builder;
   }
   void set_pipeline(Pipeline *pipeline) {
-//    pipeline_ = pipeline;
-     if (std::find(pipelines_.begin(), pipelines_.end(), pipeline) == pipelines_.end())
-         pipelines_.push_back(pipeline);
+    pipeline_ = pipeline;
+  //  if (std::find(pipelines_.begin(), pipelines_.end(), pipeline) == pipelines_.end())
+  //    pipelines_.push_back(pipeline);
   }
 
   std::string name_;
 
   const ModuleBuilder *module_builder_;
 
-  //bess::metadata::Pipeline *pipeline_;
-  Pipelines pipelines_;
+  bess::metadata::Pipeline *pipeline_;
+  //Pipelines pipelines_;
 
-  //std::vector<bess::metadata::Attribute> attrs_;
-  std::map< Pipeline*, Attributes> attrs_;
+  std::vector<bess::metadata::Attribute> attrs_;
+  //std::map< Pipeline*, Attributes> attrs_;
   bess::metadata::mt_offset_t attr_offsets_[bess::metadata::kMaxAttrsPerModule];
 
   std::vector<const Task *> tasks_;

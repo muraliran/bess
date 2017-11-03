@@ -877,14 +877,14 @@ message SetMetadataArg {
   message Attribute {
     string name = 1; /// The metadata attribute name.
     uint64 size = 2; /// The size of values stored in this attribute in bytes.
-    string pipeline = 3; /// id of the pipeline attribute attached to
+///    string pipeline = 3; /// id of the pipeline attribute attached to
     oneof value {
-      uint64 value_int = 4; /// An integer value to store in the packet (host-order).
-      bytes value_bin = 5; /// A binary value to store in the packet (host-order).
+      uint64 value_int = 3; /// An integer value to store in the packet (host-order).
+      bytes value_bin = 4; /// A binary value to store in the packet (host-order).
     }
-    int32 offset = 6; /// An index in the packet data to store copy into the metadata attribute.
-    bytes mask = 7; /// An array of bit masks to apply to each of the bytes copied starting from `offset`. If empty, the mask [0xFF,....,0xFF] will be used.
-    int32 rshift_bits = 8; /// The number of bits to shift the value at `offset` by before masking. Must be a multiple of 8. Positive and negative values represent right and left shifts respectively.
+    int32 offset = 5; /// An index in the packet data to store copy into the metadata attribute.
+    bytes mask = 6; /// An array of bit masks to apply to each of the bytes copied starting from `offset`. If empty, the mask [0xFF,....,0xFF] will be used.
+    int32 rshift_bits = 7; /// The number of bits to shift the value at `offset` by before masking. Must be a multiple of 8. Positive and negative values represent right and left shifts respectively.
   }
   repeated Attribute attrs = 1; /// A list of attributes to attach to the packet.
 }

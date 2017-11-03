@@ -269,13 +269,14 @@ static int collect_ogates(Module* m, GetModuleInfoResponse* response) {
 
 static int collect_metadata(Module* m, GetModuleInfoResponse* response) {
   size_t i = 0;
-  for (const auto& itp : m->pipelines()) {
-    for (const auto& it : m->all_attrs(itp)) {
+  //for (const auto& itp : m->pipelines()) {
+    //for (const auto& it : m->all_attrs(itp)) {
+    for (const auto& it : m->all_attrs()) {
       GetModuleInfoResponse_Attribute* attr = response->add_metadata();
 
       attr->set_name(it.name);
       attr->set_size(it.size);
-      attr->set_pipeline(itp->pipeline_id());
+      //attr->set_pipeline(itp->pipeline_id());
 
       switch (it.mode) {
         case bess::metadata::Attribute::AccessMode::kRead:
@@ -294,7 +295,7 @@ static int collect_metadata(Module* m, GetModuleInfoResponse* response) {
       attr->set_offset(m->attr_offset(i));
       i++;
     }
-  }
+  //}
 
   return 0;
 }

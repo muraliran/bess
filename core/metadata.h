@@ -82,7 +82,7 @@ struct Attribute {
   Attribute() : name(), size(), mode(), scope_id() {}
 
   std::string name;
-  std::string pipeline_id; // uuid
+  //std::string pipeline_id; // uuid
   size_t size;  // in bytes
   enum class AccessMode { kRead = 0, kWrite, kUpdate } mode;
   mutable int scope_id;
@@ -156,10 +156,10 @@ class Pipeline {
     char strid[37] = {0};
     uuid_generate_time_safe(idbuf);
     uuid_unparse(idbuf, strid);
-    pipeline_id_.assign(strid);
+    //pipeline_id_.assign(strid);
   }
 
-  const char* pipeline_id() { return pipeline_id_.c_str(); }
+  //const char* pipeline_id() { return pipeline_id_.c_str(); }
 
   // Main entry point for calculating metadata offsets.
   int ComputeMetadataOffsets();
@@ -171,7 +171,7 @@ class Pipeline {
   void DeregisterAttribute(const std::string &attr_name);
 
  private:
-  std::string pipeline_id_; // uuid
+  //std::string pipeline_id_; // uuid
 
   friend class MetadataTest;
 
@@ -224,9 +224,9 @@ class Pipeline {
   std::map<std::string, std::tuple<size_t, int> > registered_attrs_;
 };
 
-typedef std::vector<Pipeline *> Pipelines;
+//typedef std::vector<Pipeline *> Pipelines;
 extern bess::metadata::Pipeline default_pipeline;
-extern const char* default_pipeline_id;
+//extern const char* default_pipeline_id;
 
 }  // namespace metadata
 }  // namespace bess
