@@ -43,8 +43,7 @@ namespace utils {
 class Autouuid {
   public:
     Autouuid() {
-      std::memset(uuid_, 0, 16);
-      std::memset(uuid_, 0, 37);
+      init_null();
     }
 
     Autouuid(const unsigned char* buf) {
@@ -53,16 +52,23 @@ class Autouuid {
     }
 
     Autouuid(const std::string &struuid) {
-        Autouuid(struuid.c_str());
+      if (struuid.length() == 36) {
+        strcpy(struuid_, struuid.c_str());
+        uuid_parse(struuid_, uuid_);
+      } else {
+        init_null();
+        //TODO: raise exception if needed
+      }
     }
 
     Autouuid& operator=( const char* uuid_str ) {
-      if (!uuid_str || strlen(uuid_str) != 36){
-          // Todo: raise exception
-          return *this;
+      if (uuid_str || strlen(uuid_str) == 36){
+        strcpy(struuid_, uuid_str);
+        uuid_parse(struuid_, uuid_);
+      } else {
+        init_null();
+        //TODO: raise exception if needed
       }
-      strcpy(struuid_, uuid_str);
-      uuid_parse(struuid_, uuid_);
 
       return *this;
     }
@@ -91,6 +97,10 @@ class Autouuid {
     }
 
   private:
+    void init_null() {
+      std::memset(uuid_, 0, 16);
+      std::memset(uuid_, 0, 37);
+    }
     std::uint8_t uuid_[16]; // compatible with uuid_t defined in uuid/uuid.h
     char struuid_[37];
 };
