@@ -104,26 +104,49 @@ static inline bess::Gate* module_gate(const Module* m, bool is_igate,
   return nullptr;
 }
 
-static CommandResponse enable_hook_for_module(
-    const Module* m, gate_idx_t gate_idx, bool is_igate, bool use_gate,
-    const bess::GateHookFactory& factory, const google::protobuf::Any& arg) {
+static Status enable_hook_for_module(ConfigureGateHookResponse* response,
+                                     const std::string hook_name,
+                                     const Module* m, gate_idx_t gate_idx,
+                                     bool is_igate, bool use_gate,
+                                     const bess::GateHookBuilder& builder,
+                                     const google::protobuf::Any& arg) {
+  pb_error_t* error = response->mutable_error();
   if (use_gate) {
     bess::Gate* gate = module_gate(m, is_igate, gate_idx);
     if (gate == nullptr) {
-      return CommandFailure(EINVAL, "'%s': %cgate '%hu' does not exist",
-                            m->name().c_str(), is_igate ? 'i' : 'o', gate_idx);
+      return return_with_error(
+          response, ENOENT, "'%s': %cgate '%hu' does not exist",
+          m->name().c_str(), is_igate ? 'i' : 'o', gate_idx);
     }
-    return gate->NewGateHook(&factory, gate, is_igate, arg);
+
+    bess::GateHook* hook =
+        gate->CreateGateHook(&builder, gate, hook_name, arg, error);
+    if (hook) {
+      response->set_name(hook->name());
+    }
+    return Status::OK;
   }
+
+  std::vector<std::string> created_hook_names;
 
   if (is_igate) {
     for (auto& gate : m->igates()) {
       if (!gate) {
         continue;
       }
-      CommandResponse ret = gate->NewGateHook(&factory, gate, is_igate, arg);
-      if (ret.error().code() != 0) {
-        return ret;
+      bess::GateHook* hook =
+          gate->CreateGateHook(&builder, gate, hook_name, arg, error);
+      if (error->code() != 0 || !hook) {
+        // in case of failed creating gate hook, remove previously created
+        // before return
+        auto it = created_hook_names.begin();
+        while (it != created_hook_names.end()) {
+          gate->RemoveHook(*it);
+          it = created_hook_names.erase(it);
+        }
+        return Status::OK;
+      } else {
+        created_hook_names.push_back(hook->name());
       }
     }
   } else {
@@ -131,27 +154,38 @@ static CommandResponse enable_hook_for_module(
       if (!gate) {
         continue;
       }
-      CommandResponse ret = gate->NewGateHook(&factory, gate, is_igate, arg);
-      if (ret.error().code() != 0) {
-        return ret;
+      bess::GateHook* hook =
+          gate->CreateGateHook(&builder, gate, hook_name, arg, error);
+      if (error->code() != 0 || !hook) {
+        // in case of failed creating gate hook, remove previously created
+        // before return
+        auto it = created_hook_names.begin();
+        while (it != created_hook_names.end()) {
+          gate->RemoveHook(*it);
+          it = created_hook_names.erase(it);
+        }
+        return Status::OK;
+      } else {
+        created_hook_names.push_back(hook->name());
       }
     }
   }
-  return CommandSuccess();
+  return Status::OK;
 }
 
-static CommandResponse disable_hook_for_module(const Module* m,
-                                               gate_idx_t gate_idx,
-                                               bool is_igate, bool use_gate,
-                                               const std::string& hook) {
+static Status disable_hook_for_module(ConfigureGateHookResponse* response,
+                                      const std::string& hook_name,
+                                      const Module* m, gate_idx_t gate_idx,
+                                      bool is_igate, bool use_gate) {
   if (use_gate) {
     bess::Gate* gate = module_gate(m, is_igate, gate_idx);
     if (gate == nullptr) {
-      return CommandFailure(EINVAL, "'%s': %cgate '%hu' does not exist",
-                            m->name().c_str(), is_igate ? 'i' : 'o', gate_idx);
+      return return_with_error(
+          response, EINVAL, "'%s': %cgate '%hu' does not exist",
+          m->name().c_str(), is_igate ? 'i' : 'o', gate_idx);
     }
-    gate->RemoveHook(hook);
-    return CommandSuccess();
+    gate->RemoveHook(hook_name);
+    return Status::OK;
   }
 
   if (is_igate) {
@@ -159,17 +193,17 @@ static CommandResponse disable_hook_for_module(const Module* m,
       if (!gate) {
         continue;
       }
-      gate->RemoveHook(hook);
+      gate->RemoveHook(hook_name);
     }
   } else {
     for (auto& gate : m->ogates()) {
       if (!gate) {
         continue;
       }
-      gate->RemoveHook(hook);
+      gate->RemoveHook(hook_name);
     }
   }
-  return CommandSuccess();
+  return Status::OK;
 }
 
 static int collect_igates(Module* m, GetModuleInfoResponse* response) {
@@ -180,7 +214,7 @@ static int collect_igates(Module* m, GetModuleInfoResponse* response) {
 
     GetModuleInfoResponse_IGate* igate = response->add_igates();
 
-    Track* t = reinterpret_cast<Track*>(g->FindHook(Track::kName));
+    Track* t = reinterpret_cast<Track*>(g->FindHookByClass(Track::kName));
 
     if (t) {
       igate->set_cnt(t->cnt());
@@ -194,6 +228,12 @@ static int collect_igates(Module* m, GetModuleInfoResponse* response) {
       GetModuleInfoResponse_IGate_OGate* ogate = igate->add_ogates();
       ogate->set_ogate(og->gate_idx());
       ogate->set_name(og->module()->name());
+    }
+
+    for (const auto& hook : g->hooks()) {
+      GetModuleInfoResponse_GateHook* hook_info = igate->add_gatehooks();
+      hook_info->set_class_name(hook->class_name());
+      hook_info->set_hook_name(hook->name());
     }
   }
 
@@ -209,7 +249,7 @@ static int collect_ogates(Module* m, GetModuleInfoResponse* response) {
     GetModuleInfoResponse_OGate* ogate = response->add_ogates();
 
     ogate->set_ogate(g->gate_idx());
-    Track* t = reinterpret_cast<Track*>(g->FindHook(Track::kName));
+    Track* t = reinterpret_cast<Track*>(g->FindHookByClass(Track::kName));
     if (t) {
       ogate->set_cnt(t->cnt());
       ogate->set_pkts(t->pkts());
@@ -218,6 +258,12 @@ static int collect_ogates(Module* m, GetModuleInfoResponse* response) {
     }
     ogate->set_name(g->igate()->module()->name());
     ogate->set_igate(g->igate()->gate_idx());
+
+    for (const auto& hook : g->hooks()) {
+      GetModuleInfoResponse_GateHook* hook_info = ogate->add_gatehooks();
+      hook_info->set_class_name(hook->class_name());
+      hook_info->set_hook_name(hook->name());
+    }
   }
 
   return 0;
@@ -1371,6 +1417,47 @@ class BESSControlImpl final : public BESSControl::Service {
     return Status::OK;
   }
 
+  Status ListGateHookClass(ServerContext*, const EmptyRequest*,
+                           ListGateHookClassResponse* response) override {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    for (const auto& pair : bess::GateHookBuilder::all_gate_hook_builders()) {
+      const auto& builder = pair.second;
+      response->add_names(builder.class_name());
+    }
+    return Status::OK;
+  }
+
+  Status GetGateHookClassInfo(ServerContext*,
+                              const GetGateHookClassInfoRequest* request,
+                              GetGateHookClassInfoResponse* response) override {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    VLOG(1) << "GetGateHookClassInfo from client:" << std::endl
+            << request->DebugString();
+    if (!request->name().length()) {
+      return return_with_error(response, EINVAL,
+                               "Argument must be a name in str");
+    }
+
+    const std::string& cls_name = request->name();
+    const auto& it =
+        bess::GateHookBuilder::all_gate_hook_builders().find(cls_name);
+    if (it == bess::GateHookBuilder::all_gate_hook_builders().end()) {
+      return return_with_error(response, ENOENT, "No gatehook class '%s' found",
+                               cls_name.c_str());
+    }
+    const bess::GateHookBuilder* cls = &it->second;
+
+    response->set_name(cls->class_name());
+    response->set_help(cls->help_text());
+    for (const auto& cmd : cls->cmds()) {
+      response->add_cmds(cmd.first);
+      response->add_cmd_args(cmd.second);
+    }
+    return Status::OK;
+  }
+
   Status ListGateHooks(ServerContext*, const EmptyRequest*,
                        ListGateHooksResponse* response) override {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
@@ -1383,6 +1470,7 @@ class BESSControlImpl final : public BESSControl::Service {
         }
         for (auto& hook : gate->hooks()) {
           GateHookInfo* info = response->add_hooks();
+          info->set_class_name(hook->class_name());
           info->set_hook_name(hook->name());
           info->set_module_name(m->name());
           info->set_igate(gate->gate_idx());
@@ -1395,6 +1483,7 @@ class BESSControlImpl final : public BESSControl::Service {
         }
         for (auto& hook : gate->hooks()) {
           GateHookInfo* info = response->add_hooks();
+          info->set_class_name(hook->class_name());
           info->set_hook_name(hook->name());
           info->set_module_name(m->name());
           info->set_ogate(gate->gate_idx());
@@ -1407,7 +1496,7 @@ class BESSControlImpl final : public BESSControl::Service {
 
   Status ConfigureGateHook(ServerContext*,
                            const ConfigureGateHookRequest* request,
-                           CommandResponse* response) override {
+                           ConfigureGateHookResponse* response) override {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
 
     WorkerPauser wp;
@@ -1424,24 +1513,23 @@ class BESSControlImpl final : public BESSControl::Service {
       use_gate = request->hook().ogate() >= 0;
     }
 
-    const auto factory = bess::GateHookFactory::all_gate_hook_factories().find(
-        request->hook().hook_name());
-    if (factory == bess::GateHookFactory::all_gate_hook_factories().end()) {
+    const auto builder = bess::GateHookBuilder::all_gate_hook_builders().find(
+        request->hook().class_name());
+    if (builder == bess::GateHookBuilder::all_gate_hook_builders().end()) {
       return return_with_error(response, ENOENT, "No such gate hook: %s",
-                               request->hook().hook_name().c_str());
+                               request->hook().class_name().c_str());
     }
 
     if (request->hook().module_name().length() == 0) {
       // Install this hook on all modules
       for (const auto& it : ModuleGraph::GetAllModules()) {
         if (request->enable()) {
-          *response =
-              enable_hook_for_module(it.second, gate_idx, is_igate, use_gate,
-                                     factory->second, request->hook().arg());
+          enable_hook_for_module(response, request->hook().hook_name(),
+                                 it.second, gate_idx, is_igate, use_gate,
+                                 builder->second, request->hook().arg());
         } else {
-          *response =
-              disable_hook_for_module(it.second, gate_idx, is_igate, use_gate,
-                                      request->hook().hook_name());
+          disable_hook_for_module(response, request->hook().hook_name(),
+                                  it.second, gate_idx, is_igate, use_gate);
         }
         if (response->error().code() != 0) {
           return Status::OK;
@@ -1458,13 +1546,12 @@ class BESSControlImpl final : public BESSControl::Service {
                                request->hook().module_name().c_str());
     }
     if (request->enable()) {
-      *response =
-          enable_hook_for_module(it->second, gate_idx, is_igate, use_gate,
-                                 factory->second, request->hook().arg());
+      enable_hook_for_module(response, request->hook().hook_name(), it->second,
+                             gate_idx, is_igate, use_gate, builder->second,
+                             request->hook().arg());
     } else {
-      *response =
-          disable_hook_for_module(it->second, gate_idx, is_igate, use_gate,
-                                  request->hook().hook_name());
+      disable_hook_for_module(response, request->hook().hook_name(), it->second,
+                              gate_idx, is_igate, use_gate);
     }
 
     return Status::OK;
@@ -1474,7 +1561,7 @@ class BESSControlImpl final : public BESSControl::Service {
                          CommandResponse* response) override {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-    // No need to look up the hook factory: the gate either
+    // No need to look up the hook builder: the gate either
     // has a hook instance with the right name, or doesn't.
     const bess::pb::GateHookInfo& rh = request->hook();
     const auto& it = ModuleGraph::GetAllModules().find(rh.module_name());
@@ -1534,15 +1621,15 @@ class BESSControlImpl final : public BESSControl::Service {
                                request->hook_name().c_str());
     }
 
-    const auto factory =
-        bess::ResumeHookFactory::all_resume_hook_factories().find(
+    const auto builder =
+        bess::ResumeHookBuilder::all_resume_hook_builders().find(
             request->hook_name());
-    if (factory == bess::ResumeHookFactory::all_resume_hook_factories().end()) {
+    if (builder == bess::ResumeHookBuilder::all_resume_hook_builders().end()) {
       return return_with_error(response, ENOENT, "No such resume hook '%s'",
                                request->hook_name().c_str());
     }
-    auto hook = factory->second.CreateResumeHook();
-    *response = factory->second.InitResumeHook(hook.get(), request->arg());
+    auto hook = builder->second.CreateResumeHook();
+    *response = builder->second.InitResumeHook(hook.get(), request->arg());
     if (response->has_error()) {
       return Status::OK;
     }
