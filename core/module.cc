@@ -238,7 +238,6 @@ CheckConstraintResult Module::CheckModuleConstraints() const {
 
 int Module::AddMetadataAttr(const std::string &name, size_t size,
                             bess::metadata::Attribute::AccessMode mode) {
-                            //const char* pipeline) {
   int ret;
 
   if (attrs_.size() >= bess::metadata::kMaxAttrsPerModule)
@@ -250,12 +249,7 @@ int Module::AddMetadataAttr(const std::string &name, size_t size,
   if (size < 1 || size > bess::metadata::kMetadataAttrMaxSize)
     return -EINVAL;
 
-//  Pipeline* ppipe = get_pipeline(pipeline);
-//  if (!ppipe) {
-//    return -EEXIST;
-//  }
   // We do not allow a module to have multiple attributes with the same name
-  //for (const auto &it : all_attrs(ppipe)) {
   for (const auto &it : attrs_) {
     if (it.name == name) {
       return -EEXIST;
@@ -263,7 +257,6 @@ int Module::AddMetadataAttr(const std::string &name, size_t size,
   }
 
   if ((ret = pipeline_->RegisterAttribute(name, size))) {
-  //if ((ret = ppipe->RegisterAttribute(name, size))) {
     return ret;
   }
 
@@ -273,7 +266,6 @@ int Module::AddMetadataAttr(const std::string &name, size_t size,
   attr.mode = mode;
   attr.scope_id = -1;
 
-  //(attrs_[ppipe]).push_back(attr);
   attrs_.push_back(attr);
 
   return attrs_.size() - 1;

@@ -132,16 +132,6 @@ class ModuleBuilder {
       bool reset = false);
   static const std::map<std::string, ModuleBuilder> &all_module_builders();
 
-  // --Muralir--
- /* 
-  * returns an instance of a pipeline object
-  * A module may support one or more pipelines
-  * */
-  //Pipeline *CreatePipeline(const std::string &name) const;
-
-  //static const std::map<std::string, Pipeline *> &all_pipelines();
-  // -- muralir--
-
   // returns a pointer to the created module
   Module *CreateModule(const std::string &name,
                        bess::metadata::Pipeline *pipeline) const;
@@ -167,10 +157,6 @@ class ModuleBuilder {
 
  private:
   const std::function<Module *()> module_generator_;
-
-  // -- muralir ---
-  //static std::map<std::string, Pipeline *> all_pipelines_;
-  // -- muralir ---
 
   const gate_idx_t num_igates_;
   const gate_idx_t num_ogates_;
@@ -204,7 +190,6 @@ class alignas(64) Module {
   Module()
       : name_(),
         module_builder_(),
-        //pipelines_(),
         pipeline_(),
         attrs_(),
         attr_offsets_(),
@@ -300,17 +285,6 @@ class alignas(64) Module {
   // Register a task.
   task_id_t RegisterTask(void *arg);
 
-  /*
-   * Note on Pipeline: A default pipeline is created on system startup.
-   * In order to not get into a complicated looping of graph paths, complicating
-   * scoping of the attributes, it is reccoemended to defined multiple pipelines.
-   * Then scope of an attribute could be limited to a well defined cwgraph path.
-   * The attributes are always scoped to a pipeline and if none defined,
-   * all attributes will be added to the default pipeline.
-   * The graph path for packet flow is not defined by pipelines but one can
-   * customize flows by defining appropriate attributes in a pipeline scope,
-   * thus providing a lot more flexibility in flow definitions.
-   */
   // Modules should call this function to declare additional metadata
   // attributes at initialization time.
   // Static metadata attributes that are defined in module class are
@@ -320,46 +294,15 @@ class alignas(64) Module {
   // Returns its allocated ID (>= 0), or a negative number for error */
   int AddMetadataAttr(const std::string &name, size_t size,
                       bess::metadata::Attribute::AccessMode mode);
-   //                   const char* pipeline);
-  // for backward compatibility
-  //int AddMetadataAttr(const std::string &name, size_t size,
-  //                    bess::metadata::Attribute::AccessMode mode) {
-  //    return AddMetadataAttr( name, size, mode, bess::metadata::default_pipeline_id); 
-  //}
 
   CommandResponse RunCommand(const std::string &cmd,
                              const google::protobuf::Any &arg) {
     return module_builder_->RunCommand(this, cmd, arg);
   }
 
-  // for backward compatibility - phaseout once pipeline used
-  //const Attributes all_attrs() {
-  //    return all_attrs(bess::metadata::default_pipeline_id);
-  //}
-
-  // helper to get pipeline ptr
-  //const Attributes all_attrs(const char* pipe_id) {
-  //  Pipeline* pp = get_pipeline(pipe_id);
-  //  if (!pp) {
-  //    return Attributes();
-  //  }
-  //  return all_attrs(pp);
-  //}
- 
   const ModuleBuilder *module_builder() const { return module_builder_; }
 
   bess::metadata::Pipeline *pipeline() const { return pipeline_; }
-  // -- muralir
-  //Pipelines pipelines() const { return pipelines_; }
-  //Pipeline* get_pipeline( const char* pp_id) {
-  //    for (const auto& it : pipelines_) {
-  //        if (!strcmp(it->pipeline_id(), pp_id)) {
-  //            return it;
-  //        }
-  //    }
-  //    return nullptr;
-  //}
-  //-- muralir
 
   const std::string &name() const { return name_; }
 
@@ -367,15 +310,6 @@ class alignas(64) Module {
     return attrs_;
   }
 
-  // Attributes are scoped to pipeline and then to a scope component
-  //const Attributes all_attrs(Pipeline* p) const {
-  //  for (const auto& it : attrs_) {
-  //    if (it.first == p)
-  //      return it.second;
-  //  }
-  //  return Attributes();
-  //}
- 
   bool is_task() const { return is_task_; }
 
   const std::vector<const Task *> &tasks() const { return tasks_; }
@@ -496,10 +430,8 @@ class alignas(64) Module {
   void set_module_builder(const ModuleBuilder *builder) {
     module_builder_ = builder;
   }
-  void set_pipeline(Pipeline *pipeline) {
+  void set_pipeline(bess::metadata::Pipeline *pipeline) {
     pipeline_ = pipeline;
-  //  if (std::find(pipelines_.begin(), pipelines_.end(), pipeline) == pipelines_.end())
-  //    pipelines_.push_back(pipeline);
   }
 
   std::string name_;
@@ -507,10 +439,8 @@ class alignas(64) Module {
   const ModuleBuilder *module_builder_;
 
   bess::metadata::Pipeline *pipeline_;
-  //Pipelines pipelines_;
 
   std::vector<bess::metadata::Attribute> attrs_;
-  //std::map< Pipeline*, Attributes> attrs_;
   bess::metadata::mt_offset_t attr_offsets_[bess::metadata::kMaxAttrsPerModule];
 
   std::vector<const Task *> tasks_;
