@@ -224,6 +224,7 @@ void Pipeline::TraverseUpstream(Module *m, const struct Attribute *attr) {
     }
   }
 
+  // muralir - to disable removal of metadata if one of the paths don't use it
   //if (m->igates().size() == 0) {
     //scope_components_.back().set_invalid(true);
   //}
