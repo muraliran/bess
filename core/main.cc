@@ -39,6 +39,7 @@
 #include "opts.h"
 #include "packet.h"
 #include "port.h"
+#include "utils/format.h"
 #include "version.h"
 
 int main(int argc, char *argv[]) {
@@ -72,8 +73,8 @@ int main(int argc, char *argv[]) {
 
   // Load plugins
   if (!bess::bessd::LoadPlugins(FLAGS_modules)) {
-    PLOG(FATAL) << "LoadPlugins() failed to load from directory: "
-                << FLAGS_modules;
+    PLOG(WARNING) << "LoadPlugins() failed to load from directory: "
+                  << FLAGS_modules;
   }
 
   // TODO(barath): Make these DPDK calls generic, so as to not be so tied to
@@ -85,7 +86,12 @@ int main(int argc, char *argv[]) {
 
   {
     ApiServer server;
-    server.Listen(FLAGS_b, FLAGS_p);
+    std::string grpc_url = FLAGS_grpc_url;
+    if (grpc_url.empty()) {
+      grpc_url = bess::utils::Format("%s:%d", FLAGS_b.c_str(), FLAGS_p);
+    }
+
+    server.Listen(grpc_url);
 
     // Signal the parent that all initialization has been finished.
     if (!FLAGS_f) {

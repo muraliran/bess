@@ -168,11 +168,11 @@ void PriorityTrafficClass::FinishAndAccountTowardsRoot(
 
 WeightedFairTrafficClass::~WeightedFairTrafficClass() {
   while (!runnable_children_.empty()) {
-    delete runnable_children_.top().c_;
+    delete runnable_children_.top().c;
     runnable_children_.pop();
   }
   for (auto &c : blocked_children_) {
-    delete c.c_;
+    delete c.c;
   }
   TrafficClassBuilder::Clear(this);
 }
@@ -187,21 +187,12 @@ std::vector<TrafficClass *> WeightedFairTrafficClass::Children() const {
 
 bool WeightedFairTrafficClass::AddChild(TrafficClass *child,
                                         resource_share_t share) {
-  if (child->parent_) {
-    return false;
-  }
-
-  int64_t pass = 0;
-  if (!runnable_children_.empty()) {
-    pass = runnable_children_.top().pass_;
-  }
-
-  if (!share) {
+  if (child->parent_ || share == 0) {
     return false;
   }
 
   child->parent_ = this;
-  WeightedFairTrafficClass::ChildData child_data{STRIDE1 / share, pass, child};
+  ChildData child_data{STRIDE1 / share, {NextPass()}, child};
   if (child->blocked_) {
     blocked_children_.push_back(child_data);
   } else {
@@ -228,7 +219,7 @@ bool WeightedFairTrafficClass::RemoveChild(TrafficClass *child) {
 
   for (auto it = blocked_children_.begin(); it != blocked_children_.end();
        it++) {
-    if (it->c_ == child) {
+    if (it->c == child) {
       blocked_children_.erase(it);
       child->parent_ = nullptr;
       return true;
@@ -236,7 +227,7 @@ bool WeightedFairTrafficClass::RemoveChild(TrafficClass *child) {
   }
 
   bool ret = runnable_children_.delete_single_element(
-      [=](const ChildData &x) { return x.c_ == child; });
+      [=](const ChildData &x) { return x.c == child; });
   if (ret) {
     child->parent_ = nullptr;
     BlockTowardsRoot();
@@ -247,14 +238,14 @@ bool WeightedFairTrafficClass::RemoveChild(TrafficClass *child) {
 }
 
 TrafficClass *WeightedFairTrafficClass::PickNextChild() {
-  return runnable_children_.top().c_;
+  return runnable_children_.top().c;
 }
 
 void WeightedFairTrafficClass::UnblockTowardsRoot(uint64_t tsc) {
   // TODO(barath): Optimize this unblocking behavior.
   for (auto it = blocked_children_.begin(); it != blocked_children_.end();) {
-    if (!it->c_->blocked_) {
-      it->pass_ = 0;
+    if (!it->c->blocked_) {
+      it->pass = NextPass() + it->remain;
       runnable_children_.push(*it);
       blocked_children_.erase(it++);
     } else {
@@ -267,7 +258,7 @@ void WeightedFairTrafficClass::UnblockTowardsRoot(uint64_t tsc) {
 
 void WeightedFairTrafficClass::BlockTowardsRoot() {
   runnable_children_.delete_single_element([&](const ChildData &x) {
-    if (x.c_->blocked_) {
+    if (x.c->blocked_) {
       blocked_children_.push_back(x);
       return true;
     }
@@ -282,17 +273,21 @@ void WeightedFairTrafficClass::FinishAndAccountTowardsRoot(
     uint64_t tsc) {
   ACCUMULATE(stats_.usage, usage);
 
-  // DCHECK_EQ(item.c_, child) << "Child that we picked should be at the front
+  auto &item = runnable_children_.mutable_top();
+  uint64_t consumed = usage[resource_];
+  uint64_t pass_delta = item.stride * consumed / QUANTUM;
+
+  // DCHECK_EQ(item.c, child) << "Child that we picked should be at the front
   // of priority queue.";
   if (child->blocked_) {
-    auto item = runnable_children_.top();
-    runnable_children_.pop();
+    // The blocked child will be penalized when unblocked, by the amount of the
+    // resource usage (pass_delta) not accounted for this round.
+    item.remain = pass_delta;
     blocked_children_.emplace_back(std::move(item));
+    runnable_children_.pop();
     blocked_ = runnable_children_.empty();
   } else {
-    auto &item = runnable_children_.mutable_top();
-    uint64_t consumed = usage[resource_];
-    item.pass_ += item.stride_ * consumed / QUANTUM;
+    item.pass += pass_delta;
     runnable_children_.decrease_key_top();
   }
 
@@ -527,7 +522,8 @@ void RateLimitTrafficClass::FinishAndAccountTowardsRoot(
 
 LeafTrafficClass::~LeafTrafficClass() {
   TrafficClassBuilder::Clear(this);
-  task_.Detach();
+  task_->Detach();
+  delete task_;
 }
 
 std::unordered_map<std::string, TrafficClass *> TrafficClassBuilder::all_tcs_;

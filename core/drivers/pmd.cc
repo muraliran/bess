@@ -30,6 +30,8 @@
 
 #include "pmd.h"
 
+#include <rte_ethdev_pci.h>
+
 #include "../utils/ether.h"
 #include "../utils/format.h"
 
@@ -45,20 +47,10 @@ static const struct rte_eth_conf default_eth_conf() {
 
   ret.link_speeds = ETH_LINK_SPEED_AUTONEG;
 
-  ret.rxmode = {
-      .mq_mode = ETH_MQ_RX_RSS,       /* doesn't matter for 1-queue */
-      .max_rx_pkt_len = 0,            /* valid only if jumbo is on */
-      .split_hdr_size = 0,            /* valid only if HS is on */
-      .header_split = 0,              /* Header Split */
-      .hw_ip_checksum = SN_HW_RXCSUM, /* IP checksum offload */
-      .hw_vlan_filter = 0,            /* VLAN filtering */
-      .hw_vlan_strip = 0,             /* VLAN strip */
-      .hw_vlan_extend = 0,            /* Extended VLAN */
-      .jumbo_frame = 0,               /* Jumbo Frame support */
-      .hw_strip_crc = 1,              /* CRC stripped by hardware */
-      .enable_scatter = 0,            /* no scattered RX */
-      .enable_lro = 0,                /* no large receive offload */
-  };
+  ret.rxmode.mq_mode = ETH_MQ_RX_RSS;
+  ret.rxmode.ignore_offload_bitfield = 1;
+  ret.rxmode.offloads |= DEV_RX_OFFLOAD_CRC_STRIP;
+  ret.rxmode.offloads |= (SN_HW_RXCSUM ? DEV_RX_OFFLOAD_CHECKSUM : 0x0);
 
   ret.rx_adv_conf.rss_conf = {
       .rss_key = nullptr,
@@ -86,7 +78,7 @@ void PMDPort::InitDriver() {
 
     if (dev_info.pci_dev) {
       pci_info = bess::utils::Format(
-          "%04hx:%02hhx:%02hhx.%02hhx %04hx:%04hx  ",
+          "%08x:%02hhx:%02hhx.%02hhx %04hx:%04hx  ",
           dev_info.pci_dev->addr.domain, dev_info.pci_dev->addr.bus,
           dev_info.pci_dev->addr.devid, dev_info.pci_dev->addr.function,
           dev_info.pci_dev->id.vendor_id, dev_info.pci_dev->id.device_id);
@@ -158,7 +150,7 @@ static CommandResponse find_dpdk_port_by_pci_addr(const std::string &pci,
   if (port_id == DPDK_PORT_UNKNOWN) {
     int ret;
     char name[RTE_ETH_NAME_MAX_LEN];
-    snprintf(name, RTE_ETH_NAME_MAX_LEN, "%04x:%02x:%02x.%02x", addr.domain,
+    snprintf(name, RTE_ETH_NAME_MAX_LEN, "%08x:%02x:%02x.%02x", addr.domain,
              addr.bus, addr.devid, addr.function);
 
     ret = rte_eth_dev_attach(name, &port_id);
@@ -302,23 +294,74 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     }
   }
 
+  int offload_mask = 0;
+  offload_mask |= arg.vlan_offload_rx_strip() ? ETH_VLAN_STRIP_OFFLOAD : 0;
+  offload_mask |= arg.vlan_offload_rx_filter() ? ETH_VLAN_FILTER_OFFLOAD : 0;
+  offload_mask |= arg.vlan_offload_rx_qinq() ? ETH_VLAN_EXTEND_OFFLOAD : 0;
+  if (offload_mask) {
+    ret = rte_eth_dev_set_vlan_offload(ret_port_id, offload_mask);
+    if (ret != 0) {
+      return CommandFailure(-ret, "rte_eth_dev_set_vlan_offload() failed");
+    }
+  }
+
   ret = rte_eth_dev_start(ret_port_id);
   if (ret != 0) {
     return CommandFailure(-ret, "rte_eth_dev_start() failed");
   }
-
   dpdk_port_id_ = ret_port_id;
 
   numa_node = rte_eth_dev_socket_id(static_cast<int>(ret_port_id));
   node_placement_ =
       numa_node == -1 ? UNCONSTRAINED_SOCKET : (1ull << numa_node);
 
-  rte_eth_macaddr_get(dpdk_port_id_, reinterpret_cast<ether_addr *>(&mac_addr));
+  rte_eth_macaddr_get(dpdk_port_id_,
+                      reinterpret_cast<ether_addr *>(conf_.mac_addr.bytes));
 
   // Reset hardware stat counters, as they may still contain previous data
   CollectStats(true);
 
   return CommandSuccess();
+}
+
+int PMDPort::UpdateConf(const Conf &conf) {
+  rte_eth_dev_stop(dpdk_port_id_);
+
+  if (conf_.mtu != conf.mtu && conf.mtu != 0) {
+    int ret = rte_eth_dev_set_mtu(dpdk_port_id_, conf.mtu);
+    if (ret == 0) {
+      conf_.mtu = conf_.mtu;
+    } else {
+      LOG(WARNING) << "rte_eth_dev_set_mtu() failed: " << rte_strerror(-ret);
+      return ret;
+    }
+  }
+
+  if (conf_.mac_addr != conf.mac_addr && !conf.mac_addr.IsZero()) {
+    ether_addr tmp;
+    ether_addr_copy(reinterpret_cast<const ether_addr *>(&conf.mac_addr.bytes),
+                    &tmp);
+    int ret = rte_eth_dev_default_mac_addr_set(dpdk_port_id_, &tmp);
+    if (ret == 0) {
+      conf_.mac_addr = conf.mac_addr;
+    } else {
+      LOG(WARNING) << "rte_eth_dev_default_mac_addr_set() failed: "
+                   << rte_strerror(-ret);
+      return ret;
+    }
+  }
+
+  if (conf.admin_up) {
+    int ret = rte_eth_dev_start(dpdk_port_id_);
+    if (ret == 0) {
+      conf_.admin_up = true;
+    } else {
+      LOG(WARNING) << "rte_eth_dev_start() failed: " << rte_strerror(-ret);
+      return ret;
+    }
+  }
+
+  return 0;
 }
 
 void PMDPort::DeInit() {
@@ -396,11 +439,13 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 }
 
 int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
-  int sent =
-      rte_eth_tx_burst(dpdk_port_id_, qid, (struct rte_mbuf **)pkts, cnt);
-
-  queue_stats[PACKET_DIR_OUT][qid].dropped += (cnt - sent);
-
+  int sent = rte_eth_tx_burst(dpdk_port_id_, qid,
+                              reinterpret_cast<struct rte_mbuf **>(pkts), cnt);
+  int dropped = cnt - sent;
+  queue_stats[PACKET_DIR_OUT][qid].dropped += dropped;
+  queue_stats[PACKET_DIR_OUT][qid].requested_hist[cnt]++;
+  queue_stats[PACKET_DIR_OUT][qid].actual_hist[sent]++;
+  queue_stats[PACKET_DIR_OUT][qid].diff_hist[dropped]++;
   return sent;
 }
 

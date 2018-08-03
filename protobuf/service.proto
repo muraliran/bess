@@ -203,6 +203,10 @@ service BESSControl {
   /// (e.g., PortInc, PortOut, QueueInc, QueueOut)
   rpc DestroyPort (DestroyPortRequest) returns (EmptyResponse) {}
 
+  /// Runtime-updatable configuration
+  rpc SetPortConf (SetPortConfRequest) returns (EmptyResponse) {}
+  rpc GetPortConf (GetPortConfRequest) returns (GetPortConfResponse) {}
+
   /// Collect port statistics
   ///
   /// At the moment, per-queue stats are not supported.
@@ -289,6 +293,12 @@ service BESSControl {
 
   /// Enable/Disable a gate hook.
   rpc ConfigureGateHook (ConfigureGateHookRequest) returns (CommandResponse) {}
+
+  /// Enable/Disable a gate hook.
+  rpc ListGateHooks (EmptyRequest) returns (ListGateHooksResponse) {}
+
+  /// Send command to gate hook instance.
+  rpc GateHookCommand (GateHookCommandRequest) returns (CommandResponse) {}
 
   //  -------------------------------------------------------------------------
   //  Resume hooks

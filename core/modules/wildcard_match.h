@@ -114,7 +114,7 @@ class wm_hash {
     promise(len_ >= sizeof(uint64_t));
     promise(len_ <= sizeof(wm_hkey_t));
 
-#if __SSE4_2__ && __x86_64
+#if __x86_64
     for (size_t i = 0; i < len_ / 8; i++) {
       init_val = crc32c_sse42_u64(key.u64_arr[i], init_val);
     }
@@ -141,17 +141,19 @@ class WildcardMatch final : public Module {
 
   CommandResponse Init(const bess::pb::WildcardMatchArg &arg);
 
-  void ProcessBatch(bess::PacketBatch *batch) override;
+  void ProcessBatch(Context *ctx, bess::PacketBatch *batch) override;
 
   std::string GetDesc() const override;
 
+  CommandResponse GetInitialArg(const bess::pb::EmptyArg &arg);
+  CommandResponse GetRuntimeConfig(const bess::pb::EmptyArg &arg);
+  CommandResponse SetRuntimeConfig(const bess::pb::WildcardMatchConfig &arg);
   CommandResponse CommandAdd(const bess::pb::WildcardMatchCommandAddArg &arg);
   CommandResponse CommandDelete(
       const bess::pb::WildcardMatchCommandDeleteArg &arg);
   CommandResponse CommandClear(const bess::pb::EmptyArg &arg);
   CommandResponse CommandSetDefaultGate(
       const bess::pb::WildcardMatchCommandSetDefaultGateArg &arg);
-  CommandResponse CommandGetRules(const bess::pb::EmptyArg &);
 
  private:
   struct WmTuple {
@@ -169,6 +171,8 @@ class WildcardMatch final : public Module {
   int FindTuple(wm_hkey_t *mask);
   int AddTuple(wm_hkey_t *mask);
   int DelEntry(int idx, wm_hkey_t *key);
+
+  void Clear();
 
   gate_idx_t default_gate_;
 

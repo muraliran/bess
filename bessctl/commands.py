@@ -343,12 +343,12 @@ def get_var_attrs(cli, var_token, partial_word):
             var_candidates = complete_filename(partial_word, suffix='.so',
                                                skip_suffix=True)
 
-        elif var_token == '[DIRECTION]':
+        elif var_token in ('[DIRECTION]', 'DIRECTION'):
             var_type = 'dir'
             var_desc = 'gate direction discriminator (default "out")'
             var_candidates = ['in', 'out']
 
-        elif var_token == '[GATE]':
+        elif var_token in ('[GATE]', 'GATE'):
             var_type = 'gate'
             var_desc = 'gate index of a module'
 
@@ -395,13 +395,9 @@ def get_var_attrs(cli, var_token, partial_word):
             var_type = 'opts'
             var_desc = 'bess daemon command-line options (see "bessd -h")'
 
-        elif var_token == '[HOST]':
-            var_type = 'host'
-            var_desc = 'host address'
-
-        elif var_token == '[TCP_PORT]':
-            var_type = 'int'
-            var_desc = 'TCP port'
+        elif var_token == '[GRPC_URL]':
+            var_type = 'filename'
+            var_desc = 'gRPC url'
 
         elif var_token == '[PAUSE_WORKERS]':
             var_type = 'pause_workers'
@@ -595,15 +591,12 @@ def debug(cli, flag):
     cli.bess.set_debug(flag == 'enable')
 
 
-@cmd('daemon connect [HOST] [TCP_PORT]', 'Connect to BESS daemon')
-def daemon_connect(cli, host, port):
+@cmd('daemon connect [GRPC_URL]', 'Connect to BESS daemon')
+def daemon_connect(cli, grpc_url):
     kwargs = {}
 
-    if host:
-        kwargs['host'] = host
-
-    if port:
-        kwargs['port'] = port
+    if grpc_url:
+        kwargs['grpc_url'] = grpc_url
 
     cli.bess.connect(**kwargs)
 
@@ -1744,6 +1737,8 @@ TcCounterRate = collections.namedtuple('TcCounterRate',
 
 
 def _monitor_tcs(cli, *tcs):
+    GUTTER_WIDTH = 5
+
     def get_delta(old, new):
         sec_diff = new.timestamp - old.timestamp
         delta = TcCounterRate(count=(new.count - old.count) / sec_diff,
@@ -1752,19 +1747,20 @@ def _monitor_tcs(cli, *tcs):
                               packets=(new.packets - old.packets) / sec_diff)
         return delta
 
-    def print_header(timestamp):
+    def print_header(timestamp, name_len):
         cli.fout.write('\n')
-        cli.fout.write('%-20s%12s%12s%12s%12s%12s%12s\n' %
+        fmt = '%-{}s%12s%12s%12s%12s%12s%12s\n'.format(name_len)
+        cli.fout.write(fmt %
                        (time.strftime('%X') + str(timestamp % 1)[1:8],
                         'CPU MHz', 'scheduled', 'Mpps', 'Mbps',
                         'pkts/sched', 'cycles/p'))
 
-        cli.fout.write('%s\n' % ('-' * 92))
+        cli.fout.write('%s\n' % ('-' * (72 + name_len)))
 
-    def print_footer():
-        cli.fout.write('%s\n' % ('-' * 92))
+    def print_footer(name_len):
+        cli.fout.write('%s\n' % ('-' * (72 + name_len)))
 
-    def print_delta(tc, delta):
+    def print_delta(tc, delta, name_len):
         if delta.count >= 1:
             ppb = delta.packets / delta.count
         else:
@@ -1775,7 +1771,8 @@ def _monitor_tcs(cli, *tcs):
         else:
             cpp = 0
 
-        cli.fout.write('%-20s%12.3f%12d%12.3f%12.3f%12.3f%12.3f\n' %
+        fmt = '%-{}s%12.3f%12d%12.3f%12.3f%12.3f%12.3f\n'.format(name_len)
+        cli.fout.write(fmt %
                        (tc,
                         delta.cycles / 1e6,
                         delta.count,
@@ -1786,9 +1783,12 @@ def _monitor_tcs(cli, *tcs):
 
     all_tcs = cli.bess.list_tcs().classes_status
     wids = {}
+    max_len = 0
     for tc in all_tcs:
         class_ = getattr(tc, 'class')
+        max_len = max(len(class_.name), max_len)
         wids[class_.name] = class_.wid
+    max_len += GUTTER_WIDTH
 
     if not tcs:
         tcs = [getattr(tc, 'class').name for tc in all_tcs]
@@ -1810,13 +1810,13 @@ def _monitor_tcs(cli, *tcs):
             for tc in tcs:
                 now[tc] = cli.bess.get_tc_stats(tc)
 
-            print_header(now[tc].timestamp)
+            print_header(now[tc].timestamp, max_len)
 
             for tc in tcs:
                 print_delta('W%d %s' % (wids[tc], tc),
-                            get_delta(last[tc], now[tc]))
+                            get_delta(last[tc], now[tc]), max_len)
 
-            print_footer()
+            print_footer(max_len)
 
             for tc in tcs:
                 last[tc] = now[tc]
@@ -1929,6 +1929,16 @@ def track_module(cli, flag, module_name, direction, gate):
      'Count the packets, batches, and bits on specified or all gates')
 def track_module_bits(cli, flag, module_name, direction, gate):
     _track_module(cli, True, flag, module_name, direction, gate)
+
+# really should support "all gates" but that requires that we
+# iterate over all gates
+
+
+@cmd('track reset MODULE DIRECTION GATE',
+     'Reset counts of packets, batches, and bits on specified gate')
+def track_reset(cli, module_name, direction, gate):
+    cli.bess.run_gate_command('track', module_name, direction, gate, 'reset',
+                              'EmptyArg', {})
 
 
 @cmd('interactive', 'Switch to interactive mode')

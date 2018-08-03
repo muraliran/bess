@@ -55,36 +55,33 @@ CXXCOMPILER := $(shell expr $(word 1, $(shell $(CXX) --version)) : '\(clang\|g++
 CXXVERSION := $(shell $(CXX) -dumpversion)
 
 ifeq "$(CXXCOMPILER)" "g++"
-ifneq "$(shell printf '$(CXXVERSION)\n5' | sort -V | head -n1)" "5"
-$(error g++ 5 or higher is required. Use container_build.py if newer g++ is not available.)
-endif
+  ifneq "$(shell printf '$(CXXVERSION)\n5' | sort -V | head -n1)" "5"
+    $(error g++ 5 or higher is required. Use container_build.py if newer g++ is not available.)
+  endif
 endif
 
 HAS_PKG_CONFIG := $(shell command -v $(PKG_CONFIG) 2>&1 >/dev/null && echo yes || echo no)
 
-RTE_SDK ?= $(abspath ../deps/dpdk-17.05)
+RTE_SDK ?= $(abspath ../deps/dpdk-17.11)
 RTE_TARGET ?= $(shell uname -m)-native-linuxapp-gcc
 DPDK_LIB ?= dpdk
 
 ifneq ($(wildcard $(RTE_SDK)/$(RTE_TARGET)/*),)
-	DPDK_INC_DIR := $(RTE_SDK)/$(RTE_TARGET)/include
-	DPDK_LIB_DIR := $(RTE_SDK)/$(RTE_TARGET)/lib
+  DPDK_INC_DIR := $(RTE_SDK)/$(RTE_TARGET)/include
+  DPDK_LIB_DIR := $(RTE_SDK)/$(RTE_TARGET)/lib
 else ifneq ($(wildcard $(RTE_SDK)/build/*),)
-	# if the user didn't do "make install" for DPDK
-	DPDK_INC_DIR := $(RTE_SDK)/build/include
-	DPDK_LIB_DIR := $(RTE_SDK)/build/lib
-else ifeq ($(words $(MAKECMDGOALS)),1)
-	ifneq ($(MAKECMDGOALS),clean)
-	$(error DPDK is not available. \
-		Make sure $(abspath $(RTE_SDK)) is available and built)
-	endif
+  # if the user didn't do "make install" for DPDK
+  DPDK_INC_DIR := $(RTE_SDK)/build/include
+  DPDK_LIB_DIR := $(RTE_SDK)/build/lib
+else ifneq ($(MAKECMDGOALS),clean)
+  $(error DPDK is not available. Make sure $(abspath $(RTE_SDK)) is available and built)
 endif
 
 # We always want these libraries to be dynamically linked even when the
 # user requests a static build.
 ALWAYS_DYN_LIBS := -lpthread -ldl
 # These libraries are not supported by pkg-config.
-ALWAYS_LIBS := -lpcap -lgflags
+ALWAYS_LIBS := -lpcap -lgflags -lnuma
 # If pkg-config is available, we just need a list of the dependecies.
 PKG_CONFIG_DEPS := uuid libglog protobuf grpc++ libunwind zlib
 # If pkg-config is not available, we need to list the libs we depend on.
@@ -95,9 +92,9 @@ NO_PKG_CONFIG_LIBS := -lglog -lgflags -lprotobuf -lgrpc++ -lunwind -lz
 NO_PKG_CONFIG_LIBS_INDIRECT := -luuid -lgrpc -lssl -lcrypto -llzma
 
 ifeq ($(HAS_PKG_CONFIG), yes)
-    PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PKG_CONFIG_DEPS))
+  PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PKG_CONFIG_DEPS))
 else
-    PKG_CFLAGS :=
+  PKG_CFLAGS :=
 endif
 
 # Plugins get to look in $COREDIR through -I $(COREDIR).  Let them also
@@ -113,35 +110,35 @@ endif
 # -MMD dependency recording (should we use -MD?).
 COREDIR := $(abspath .)
 CXXARCHFLAGS ?= -march=native
-CXXFLAGS += -std=c++11 -g3 -ggdb3 $(CXXARCHFLAGS) \
-	    -isystem $(DPDK_INC_DIR) -isystem $(COREDIR) \
-	    -isystem $(dir $<).. -isystem $(COREDIR)/modules \
-	    -D_GNU_SOURCE \
-	    -Werror \
-	    -Wall -Wextra -Wcast-align $(PKG_CFLAGS)
+CXXFLAGS += -std=c++14 -g3 -ggdb3 $(CXXARCHFLAGS) \
+            -isystem $(DPDK_INC_DIR) -isystem $(COREDIR) \
+            -isystem $(dir $<).. -isystem $(COREDIR)/modules \
+            -D_GNU_SOURCE \
+            -Werror -Wall -Wextra -Wcast-align -Wno-error=deprecated-declarations \
+            $(PKG_CFLAGS)
 
 PERMISSIVE := -Wno-unused-parameter -Wno-missing-field-initializers \
-	      -Wno-unused-private-field
+              -Wno-unused-private-field
 
 # -Wshadow should not be used for g++ 4.x, as it has too many false positives
 ifeq "$(shell expr $(CXXCOMPILER) = g++ \& $(CXXVERSION) \< 50000)" "0"
-	CXXFLAGS += -Wshadow
+  CXXFLAGS += -Wshadow
 endif
 
 # Disable GNU_UNIQUE symbol for g++
 ifeq "$(shell expr $(CXXCOMPILER) = g++)" "1"
-	CXXFLAGS += -fno-gnu-unique
+  CXXFLAGS += -fno-gnu-unique
 endif
 
 LDFLAGS += -rdynamic -L$(DPDK_LIB_DIR) -Wl,-rpath=$(DPDK_LIB_DIR) -pthread -L/usr/lib/x86_64-linux-gnu
 ifdef BESS_LINK_DYNAMIC
-    LIBS_ALL_SHARED = -Wl,-call_shared
-    LIBS_DL_SHARED =
-    ifeq ($(HAS_PKG_CONFIG), yes)
-      PKG_LIBS := $(shell $(PKG_CONFIG) --libs $(PKG_CONFIG_DEPS))
-    else
-      PKG_LIBS := $(NO_PKG_CONFIG_LIBS)
-    endif
+  LIBS_ALL_SHARED = -Wl,-call_shared
+  LIBS_DL_SHARED =
+  ifeq ($(HAS_PKG_CONFIG), yes)
+    PKG_LIBS := $(shell $(PKG_CONFIG) --libs $(PKG_CONFIG_DEPS))
+  else
+    PKG_LIBS := $(NO_PKG_CONFIG_LIBS)
+  endif
 else # Used static libraries
     LIBS_ALL_SHARED =
     LIBS_DL_SHARED = -Wl,-call_shared
@@ -158,22 +155,24 @@ else # Used static libraries
 endif
 
 LIBS += -Wl,-non_shared \
-	-Wl,--whole-archive -l$(DPDK_LIB) -Wl,--no-whole-archive \
-	$(LIBS_ALL_SHARED) \
-	$(PKG_LIBS) $(ALWAYS_LIBS) \
-	$(LIBS_DL_SHARED) \
-	$(ALWAYS_DYN_LIBS)
+        -Wl,--whole-archive -l$(DPDK_LIB) -Wl,--no-whole-archive \
+        $(LIBS_ALL_SHARED) \
+        $(PKG_LIBS) $(ALWAYS_LIBS) \
+        $(LIBS_DL_SHARED) \
+        $(ALWAYS_DYN_LIBS)
 
 ifdef SANITIZE
-	CXXFLAGS += -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer
-	LDFLAGS += -fsanitize=address -fsanitize=undefined
+  CXXFLAGS += -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer
+  LDFLAGS += -fsanitize=address -fsanitize=undefined
 endif
 
-ifdef DEBUG
-	CXXFLAGS += --coverage -O0
-	LDFLAGS += --coverage
+ifdef COVERAGE
+  CXXFLAGS += --coverage -O0
+  LDFLAGS += --coverage
+else ifdef DEBUG
+  CXXFLAGS += -O0
 else
-	CXXFLAGS += -Ofast -DNDEBUG
+  CXXFLAGS += -Ofast -DNDEBUG
 endif
 
 -include extra*.mk
@@ -216,24 +215,46 @@ PROTOC_CXX := $(shell which grpc_cpp_plugin)
 PROTOCFLAGS += --cpp_out=./pb --grpc_out=./pb --plugin=protoc-gen-grpc=$(PROTOC_CXX)
 
 # NB: MODULES as defined here may include test and/or benchmark
-# sources -- it's just all the files in all modules/ including
-# any plugin modules.  Use MODULE_SRCS below, which filters them
-# out, when that's important.
+# sources -- it's just all the files in all modules/.
+# Use MODULE_SRCS below, which filters them out, when that's important.
 DRIVERS := $(foreach dir,drivers $(DRIVER_PLUGINS),$(wildcard $(dir)/*.cc))
-MODULES := $(foreach dir,modules $(MODULE_PLUGINS),$(wildcard $(dir)/*.cc))
+MODULES := $(foreach dir,modules,$(wildcard $(dir)/*.cc))
 UTILS := $(foreach dir,utils $(UTIL_PLUGINS),$(wildcard $(dir)/*.cc))
-GATE_HOOKS := $(foreach dir,gate_hooks $(GATE_HOOK_PLUGINS),$(wildcard $(dir)/*.cc))
-RESUME_HOOKS := $(foreach dir,resume_hooks $(RESUME_HOOK_PLUGINS),$(wildcard $(dir)/*.cc))
+GATE_HOOK_SRCS := $(foreach dir,gate_hooks $(GATE_HOOK_PLUGINS),$(wildcard $(dir)/*.cc))
+GATE_HOOKS_H := $(foreach dir,gate_hooks $(GATE_HOOK_PLUGINS),$(wildcard $(dir)/*.h))
+RESUME_HOOK_SRCS := $(foreach dir,resume_hooks $(RESUME_HOOK_PLUGINS),$(wildcard $(dir)/*.cc))
+RESUME_HOOKS_H := $(foreach dir,resume_hooks $(RESUME_HOOK_PLUGINS),$(wildcard $(dir)/*.h))
 DRIVER_H := $(foreach dir,drivers $(DRIVER_PLUGINS),$(wildcard $(dir)/*.h))
-MODULE_H := $(foreach dir,drivers $(MODULE_PLUGINS),$(wildcard $(dir)/*.h))
+MODULE_H := $(foreach dir,drivers,$(wildcard $(dir)/*.h))
 UTIL_H := $(foreach dir,utils $(UTIL_PLUGINS),$(wildcard $(dir)/*.h))
+PLUGIN_MODULES := $(foreach dir,$(MODULE_PLUGINS),$(wildcard $(dir)/*.cc))
+PLUGIN_MODULE_H := $(foreach dir,$(MODULE_PLUGINS),$(wildcard $(dir)/*.h))
+
+# NB: the first vpath is for most files, including objects for drivers,
+# modules, utils, gate_hooks, and resume_hooks since those compile to
+# "{drivers,modules,utils,gate_hooks,resume_hooks}/%.o".  That is,
+# we just need make to search ./<path> and $(PLUGINS)/<path>.
+#
+# We need to keep the various names separate since, e.g., we have:
+#     resume_hooks/metadata.o: resume_hooks/metadata.cc
+# and yet:
+#     metadata.o: metadata.cc
+# (which are very different files).  We don't want to require that
+# all source and object file names be unique across everything, so
+# we use GNU make's "best (longest) match" feature to build the
+# .o file from the appropriate source.
+vpath %.cc $(PLUGINS)
+# These vpaths, however, are for tests that compile to %_test.o,
+# in the current directory.  There are no such tests at the moment
+# for gate hooks and resume hooks, but there are some for drivers,
+# modules, and utils.
 vpath %.cc drivers $(DRIVER_PLUGINS)
 vpath %.cc modules $(MODULE_PLUGINS)
 vpath %.cc utils $(UTIL_PLUGINS)
 vpath %.cc gate_hooks $(GATE_HOOK_PLUGINS)
 vpath %.cc resume_hooks $(RESUME_HOOK_PLUGINS)
 
-ALL_SRCS := $(wildcard *.cc gate_hooks/*.cc resume_hooks/*.cc) $(MODULES) $(DRIVERS) $(UTILS)
+ALL_SRCS := $(wildcard *.cc) $(GATE_HOOKS) $(RESUME_HOOKS) $(MODULES) $(DRIVERS) $(UTILS)
 
 TEST_SRCS := $(filter %_test.cc gtest_main.cc, $(ALL_SRCS))
 TEST_OBJS := $(patsubst %.cc,%.o,$(notdir $(TEST_SRCS)))
@@ -246,21 +267,37 @@ BENCH_EXEC := $(BENCH_OBJS:%.o=%)
 
 MODULE_SRCS := $(filter-out $(TEST_SRCS) $(BENCH_SRCS), $(MODULES))
 MODULE_OBJS := $(addprefix modules/,$(patsubst %.cc,%.o, \
-		 $(notdir $(MODULE_SRCS))))
-MODULE_LIBS := $(MODULE_OBJS:.o=.so)
+                 $(notdir $(MODULE_SRCS))))
+
+PLUGIN_MODULE_OBJS := $(addprefix modules/,$(patsubst %.cc,%.o, \
+                 $(notdir $(PLUGIN_MODULES))))
+MODULE_LIBS := $(PLUGIN_MODULE_OBJS:.o=.so)
+
+ifdef MODULE_LINK_DYNAMIC
+  MODULE_LIBS += $(MODULE_OBJS:.o=.so)
+endif
+
+GATE_HOOK_OBJS := $(addprefix gate_hooks/,$(patsubst %.cc,%.o, \
+                    $(notdir $(GATE_HOOK_SRCS))))
+RESUME_HOOK_OBJS := $(addprefix resume_hooks/,$(patsubst %.cc,%.o, \
+                      $(notdir $(RESUME_HOOK_SRCS))))
 
 # We don't (yet?) make shared objects for drivers.
 DRIVER_SRCS := $(filter-out $(TEST_SRCS) $(BENCH_SRCS), $(DRIVERS))
 DRIVER_OBJS := $(addprefix drivers/,$(patsubst %.cc,%.o, \
-		 $(notdir $(DRIVER_SRCS))))
+                 $(notdir $(DRIVER_SRCS))))
 
 UTIL_SRCS := $(filter-out $(TEST_SRCS) $(BENCH_SRCS), $(UTILS))
 UTIL_OBJS := $(addprefix utils/,$(patsubst %.cc,%.o,$(notdir $(UTIL_SRCS))))
 
-SRCS := $(filter-out $(TEST_SRCS) $(BENCH_SRCS) $(MODULE_SRCS) $(DRIVER_SRCS) $(UTIL_SRCS), $(ALL_SRCS)) $(PROTO_SRCS)
+SRCS := $(filter-out $(TEST_SRCS) $(BENCH_SRCS) $(MODULE_SRCS) $(DRIVER_SRCS) $(UTIL_SRCS) $(GATE_HOOK_SRCS) $(RESUME_HOOK_SRCS), $(ALL_SRCS)) $(PROTO_SRCS)
 # ? why doesn't HEADERS include module headers?
-HEADERS := $(wildcard *.h utils/*.h $(DRIVER_H) gate_hooks/*.h resume_hooks/*.h)
-OBJS := $(SRCS:.cc=.o) $(DRIVER_OBJS) $(UTIL_OBJS)
+HEADERS := $(wildcard *.h utils/*.h) $(DRIVER_H) $(GATE_HOOKS_H) $(RESUME_HOOKS_H)
+OBJS := $(SRCS:.cc=.o) $(DRIVER_OBJS) $(UTIL_OBJS) $(GATE_HOOK_OBJS) $(RESUME_HOOK_OBJS)
+
+ifndef MODULE_LINK_DYNAMIC
+  OBJS += $(MODULE_OBJS)
+endif
 
 EXEC := bessd
 
@@ -289,8 +326,6 @@ tests: $(TEST_OBJS) $(TEST_EXEC) $(TEST_ALL_EXEC)
 benchmarks: $(BENCH_OBJS) $(BENCH_EXEC)
 
 protobuf: $(PROTO_SRCS)
-
-drivers: protobuf $(DRIVER_OBJS)
 
 modules: protobuf $(MODULE_OBJS) $(MODULE_LIBS)
 
@@ -324,120 +359,132 @@ $(2): $(3)
 	$$(eval _TYPE := $$(strip $(1)))
 	$$(eval _CMD := $$(strip $(4)))
 	@if [ $$(VERBOSE) -eq 0 ]; then \
-		printf "%-11s %s\n" "[$$(_TYPE)]" "$$@"; \
+	  printf "%-11s %s\n" "[$$(_TYPE)]" "$$@"; \
 	else \
-		printf "%-11s %s\n" "[$$(_TYPE)]" "$$(_CMD)"; \
+	  printf "%-11s %s\n" "[$$(_TYPE)]" "$$(_CMD)"; \
 	fi
 	@if ! $$(_CMD); then \
-		echo "Error: \033[0;31m$$@"; \
-		echo "\033[0;33m$$(_CMD)\033[0m"; \
-		false; \
+	  echo "Error: \033[0;31m$$@"; \
+	  echo "\033[0;33m$$(_CMD)\033[0m"; \
+	  false; \
 	fi
 endef
 
 $(eval $(call BUILD, \
-	PROTOC, \
-	pb/%.pb.cc pb/%.pb.h pb/%.grpc.pb.cc pb/%.grpc.pb.h, \
-	%.proto, \
-	$(PROTOC) $$< $(PROTOCFLAGS)))
+        PROTOC, \
+        pb/%.pb.cc pb/%.pb.h pb/%.grpc.pb.cc pb/%.grpc.pb.h, \
+        %.proto, \
+        $(PROTOC) $$< $(PROTOCFLAGS)))
 
 $(eval $(call BUILD, \
-	CXX, \
-	pb/%.pb.o, \
-	pb/%.pb.cc, \
-	$(CXX) -o $$@ -c $$< $$(CXXFLAGS) $(PERMISSIVE) $$(DEPFLAGS)))
+        CXX, \
+        pb/%.pb.o, \
+        pb/%.pb.cc, \
+        $(CXX) -o $$@ -c $$< $$(CXXFLAGS) $(PERMISSIVE) $$(DEPFLAGS)))
 
 $(eval $(call BUILD, \
-	DRIVER_CXX, \
-	drivers/%.o, \
-	%.cc, \
-	$(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
+        DRIVER_CXX, \
+        drivers/%.o, \
+        drivers/%.cc, \
+        $(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
 
 $(eval $(call BUILD, \
-	MODULE_CXX, \
-	modules/%.o, \
-	%.cc, \
-	$(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS) -fPIC))
+        MODULE_CXX, \
+        modules/%.o, \
+        modules/%.cc $(PROTO_HEADERS), \
+        $(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS) -fPIC))
 
 $(eval $(call BUILD, \
-	CXX, \
-	utils/%.o, \
-	%.cc, \
-	$(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
+        UTILS_CXX, \
+        utils/%.o, \
+        utils/%.cc, \
+        $(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
 
 $(eval $(call BUILD, \
-	MODULE_LD, \
-	%.so, \
-	%.o, \
-	$(CXX) -shared -o $$@ $$^ $(LDFLAGS)))
+        GATEHOOK_CXX, \
+        gate_hooks/%.o, \
+        gate_hooks/%.cc, \
+        $(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
 
 $(eval $(call BUILD, \
-	MODULE_TEST_LD, \
-	modules/%_test, \
-	modules/%_test.o modules/%.o gtest-all.o gtest_main.o bess.a, \
-	$(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS)))
+        RESUMEHOOK_CXX, \
+        resume_hooks/%.o, \
+        resume_hooks/%.cc, \
+        $(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
 
 $(eval $(call BUILD, \
-	MODULE_BENCH_LD, \
-	modules/%_bench, \
-	modules/%_bench.o modules/%.o bess.a, \
-	$(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS) -lbenchmark))
+        MODULE_LD, \
+        %.so, \
+        %.o, \
+        $(CXX) -shared -o $$@ $$^ $(LDFLAGS)))
 
 $(eval $(call BUILD, \
-	CXX, \
-	%.o, \
-	%.cc $(PROTO_HEADERS), \
-	$(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
+        MODULE_TEST_LD, \
+        modules/%_test, \
+        modules/%_test.o modules/%.o gtest-all.o gtest_main.o bess.a, \
+        $(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS)))
 
 $(eval $(call BUILD, \
-	LD, \
-	$(EXEC), \
-	$(OBJS), \
-	$(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS)))
+        MODULE_BENCH_LD, \
+        modules/%_bench, \
+        modules/%_bench.o modules/%.o bess.a, \
+        $(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS) -lbenchmark))
 
 $(eval $(call BUILD, \
-	TEST_CXX, \
-	%_test.o, \
-	%_test.cc, \
-	$(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
+        CXX, \
+        %.o, \
+        %.cc $(PROTO_HEADERS), \
+        $(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
 
 $(eval $(call BUILD, \
-	TEST_LD, \
-	%_test, \
-	%_test.o gtest-all.o gtest_main.o bess.a, \
-	$(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS)))
+        LD, \
+        $(EXEC), \
+        $(OBJS), \
+        $(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS)))
 
 $(eval $(call BUILD, \
-	TEST_LD, \
-	$(TEST_ALL_EXEC), \
-	$(TEST_OBJS) $(MODULE_OBJS) gtest-all.o bess.a, \
-	$(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS)))
+        TEST_CXX, \
+        %_test.o, \
+        %_test.cc $(PROTO_HEADERS), \
+        $(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
 
 $(eval $(call BUILD, \
-	TEST_CXX, \
-	gtest-all.o, \
-	$(GTEST_DIR)/src/gtest-all.cc, \
-	$(CXX) -o $$@ -c $$< -isystem $(GTEST_DIR) $$(CXXFLAGS) $$(DEPFLAGS)))
+        TEST_LD, \
+        %_test, \
+        %_test.o gtest-all.o gtest_main.o bess.a, \
+        $(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS)))
 
 $(eval $(call BUILD, \
-	BENCH_CXX, \
-	%_bench.o, \
-	%_bench.cc, \
-	$(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
+        TEST_LD, \
+        $(TEST_ALL_EXEC), \
+        $(TEST_OBJS) $(MODULE_OBJS) gtest-all.o bess.a, \
+        $(CXX) -o $$@ $$^ $(LDFLAGS) $(LIBS)))
 
 $(eval $(call BUILD, \
-	BENCH_LD, \
-	%_bench, \
-	%_bench.o bess.a, \
-	$(CXX) -o $$@ $$^ $(LDFLAGS) -lbenchmark $(LIBS)))
+        TEST_CXX, \
+        gtest-all.o, \
+        $(GTEST_DIR)/src/gtest-all.cc, \
+        $(CXX) -o $$@ -c $$< -isystem $(GTEST_DIR) $$(CXXFLAGS) $$(DEPFLAGS)))
+
+$(eval $(call BUILD, \
+        BENCH_CXX, \
+        %_bench.o, \
+        %_bench.cc, \
+        $(CXX) -o $$@ -c $$< $$(CXXFLAGS) $$(DEPFLAGS)))
+
+$(eval $(call BUILD, \
+        BENCH_LD, \
+        %_bench, \
+        %_bench.o bess.a, \
+        $(CXX) -o $$@ $$^ $(LDFLAGS) -lbenchmark $(LIBS)))
 
 LIB_OBJS := $(filter-out main.o, $(OBJS))
 
 $(eval $(call BUILD, \
-	AR, \
-	bess.a, \
-	$(LIB_OBJS), \
-	$(AR) rcs $$@ $$^))
+        AR, \
+        bess.a, \
+        $(LIB_OBJS), \
+        $(AR) rcs $$@ $$^))
 
 .PRECIOUS: %.d $(PROTO_HEADERS)
 

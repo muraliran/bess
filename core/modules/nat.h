@@ -82,7 +82,7 @@ struct alignas(8) Endpoint {
 
   struct Hash {
     std::size_t operator()(const Endpoint &e) const {
-#if __SSE4_2__ && __x86_64
+#if __x86_64
       return crc32c_sse42_u64(
           (static_cast<uint64_t>(e.addr.raw_value()) << 32) |
               (static_cast<uint64_t>(e.port.raw_value()) << 16) |
@@ -118,6 +118,16 @@ struct NatEntry {
   uint64_t last_refresh;  // in nanoseconds (ctx.current_ns)
 };
 
+// Port ranges are used to scale out the NAT.
+struct PortRange {
+  // Start of port range.
+  uint16_t begin;
+  // End of port range (exclusive).
+  uint16_t end;
+  // Is range usable, i.e., can we safely give out ports.
+  bool suspended;
+};
+
 // NAT module. 2 igates and 2 ogates
 // igate/ogate 0: forward dir
 // igate/ogate 1: reverse dir
@@ -131,9 +141,14 @@ class NAT final : public Module {
   static const gate_idx_t kNumIGates = 2;
   static const gate_idx_t kNumOGates = 2;
 
-  CommandResponse Init(const bess::pb::NATArg &arg);
+  static const Commands cmds;
 
-  void ProcessBatch(bess::PacketBatch *batch) override;
+  CommandResponse Init(const bess::pb::NATArg &arg);
+  CommandResponse GetInitialArg(const bess::pb::EmptyArg &arg);
+  CommandResponse GetRuntimeConfig(const bess::pb::EmptyArg &arg);
+  CommandResponse SetRuntimeConfig(const bess::pb::EmptyArg &arg);
+
+  void ProcessBatch(Context *ctx, bess::PacketBatch *batch) override;
 
   // returns the number of active NAT entries (flows)
   std::string GetDesc() const override;
@@ -151,9 +166,13 @@ class NAT final : public Module {
   HashTable::Entry *CreateNewEntry(const Endpoint &internal, uint64_t now);
 
   template <Direction dir>
-  void DoProcessBatch(bess::PacketBatch *batch);
+  void DoProcessBatch(Context *ctx, bess::PacketBatch *batch);
 
   std::vector<be32_t> ext_addrs_;
+
+  // Port ranges available for each address. The first index is the same as the
+  // ext_addrs_ range.
+  std::vector<std::vector<PortRange>> port_ranges_;
 
   HashTable map_;
   Random rng_;

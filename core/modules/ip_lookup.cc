@@ -34,113 +34,12 @@
 #include <rte_errno.h>
 #include <rte_lpm.h>
 
+#include "../utils/bits.h"
 #include "../utils/ether.h"
+#include "../utils/format.h"
 #include "../utils/ip.h"
 
 #define VECTOR_OPTIMIZATION 1
-
-// Strangely, rte_lpm_lookupx4() in rte_lpm_sse.h causes a build error
-// when g++ is run with -O0 option.
-// error: the last argument must be an 8-bit immediate
-//   i24 = _mm_srli_si128(i24, sizeof(uint64_t));
-// ... although the last argument is indeed a compile-time constant.
-// To work around the issue as a quick and dirty fix, this function was copied
-// from DPDK 17.02 to modify its body. See #if 0 .. #endif block below.
-#ifndef __OPTIMIZE__
-static void lpm_lookupx4(const struct rte_lpm *lpm, __m128i ip, uint64_t hop[2],
-                         uint32_t defv) {
-  __m128i i24;
-  rte_xmm_t i8;
-  uint32_t tbl[4];
-  uint64_t idx, pt, pt2;
-  const uint32_t *ptbl;
-
-  const __m128i mask8 =
-      _mm_set_epi32(UINT8_MAX, UINT8_MAX, UINT8_MAX, UINT8_MAX);
-
-  /*
-   * RTE_LPM_VALID_EXT_ENTRY_BITMASK for 2 LPM entries
-   * as one 64-bit value (0x0300000003000000).
-   */
-  const uint64_t mask_xv = ((uint64_t)RTE_LPM_VALID_EXT_ENTRY_BITMASK |
-                            (uint64_t)RTE_LPM_VALID_EXT_ENTRY_BITMASK << 32);
-
-  /*
-   * RTE_LPM_LOOKUP_SUCCESS for 2 LPM entries
-   * as one 64-bit value (0x0100000001000000).
-   */
-  const uint64_t mask_v = ((uint64_t)RTE_LPM_LOOKUP_SUCCESS |
-                           (uint64_t)RTE_LPM_LOOKUP_SUCCESS << 32);
-
-  /* get 4 indexes for tbl24[]. */
-  i24 = _mm_srli_epi32(ip, CHAR_BIT);
-
-  /* extract values from tbl24[] */
-  idx = _mm_cvtsi128_si64(i24);
-#if 0
-	i24 = _mm_srli_si128(i24, sizeof(uint64_t));
-#else
-  i24 = _mm_srli_si128(i24, 8);
-#endif
-  ptbl = (const uint32_t *)&lpm->tbl24[(uint32_t)idx];
-  tbl[0] = *ptbl;
-  ptbl = (const uint32_t *)&lpm->tbl24[idx >> 32];
-  tbl[1] = *ptbl;
-
-  idx = _mm_cvtsi128_si64(i24);
-
-  ptbl = (const uint32_t *)&lpm->tbl24[(uint32_t)idx];
-  tbl[2] = *ptbl;
-  ptbl = (const uint32_t *)&lpm->tbl24[idx >> 32];
-  tbl[3] = *ptbl;
-
-  /* get 4 indexes for tbl8[]. */
-  i8.x = _mm_and_si128(ip, mask8);
-
-  pt = (uint64_t)tbl[0] | (uint64_t)tbl[1] << 32;
-  pt2 = (uint64_t)tbl[2] | (uint64_t)tbl[3] << 32;
-
-  /* search successfully finished for all 4 IP addresses. */
-  if (likely((pt & mask_xv) == mask_v) && likely((pt2 & mask_xv) == mask_v)) {
-    hop[0] = pt & RTE_LPM_MASKX4_RES;
-    hop[1] = pt2 & RTE_LPM_MASKX4_RES;
-    return;
-  }
-
-  if (unlikely((pt & RTE_LPM_VALID_EXT_ENTRY_BITMASK) ==
-               RTE_LPM_VALID_EXT_ENTRY_BITMASK)) {
-    i8.u32[0] = i8.u32[0] + (uint8_t)tbl[0] * RTE_LPM_TBL8_GROUP_NUM_ENTRIES;
-    ptbl = (const uint32_t *)&lpm->tbl8[i8.u32[0]];
-    tbl[0] = *ptbl;
-  }
-  if (unlikely((pt >> 32 & RTE_LPM_VALID_EXT_ENTRY_BITMASK) ==
-               RTE_LPM_VALID_EXT_ENTRY_BITMASK)) {
-    i8.u32[1] = i8.u32[1] + (uint8_t)tbl[1] * RTE_LPM_TBL8_GROUP_NUM_ENTRIES;
-    ptbl = (const uint32_t *)&lpm->tbl8[i8.u32[1]];
-    tbl[1] = *ptbl;
-  }
-  if (unlikely((pt2 & RTE_LPM_VALID_EXT_ENTRY_BITMASK) ==
-               RTE_LPM_VALID_EXT_ENTRY_BITMASK)) {
-    i8.u32[2] = i8.u32[2] + (uint8_t)tbl[2] * RTE_LPM_TBL8_GROUP_NUM_ENTRIES;
-    ptbl = (const uint32_t *)&lpm->tbl8[i8.u32[2]];
-    tbl[2] = *ptbl;
-  }
-  if (unlikely((pt2 >> 32 & RTE_LPM_VALID_EXT_ENTRY_BITMASK) ==
-               RTE_LPM_VALID_EXT_ENTRY_BITMASK)) {
-    i8.u32[3] = i8.u32[3] + (uint8_t)tbl[3] * RTE_LPM_TBL8_GROUP_NUM_ENTRIES;
-    ptbl = (const uint32_t *)&lpm->tbl8[i8.u32[3]];
-    tbl[3] = *ptbl;
-  }
-
-  uint32_t *hop32 = reinterpret_cast<uint32_t *>(hop);
-  hop32[0] = (tbl[0] & RTE_LPM_LOOKUP_SUCCESS) ? tbl[0] & 0x00FFFFFF : defv;
-  hop32[1] = (tbl[1] & RTE_LPM_LOOKUP_SUCCESS) ? tbl[1] & 0x00FFFFFF : defv;
-  hop32[2] = (tbl[2] & RTE_LPM_LOOKUP_SUCCESS) ? tbl[2] & 0x00FFFFFF : defv;
-  hop32[3] = (tbl[3] & RTE_LPM_LOOKUP_SUCCESS) ? tbl[3] & 0x00FFFFFF : defv;
-}
-
-// Substitute DPDK's function with ours.
-#endif
 
 static inline int is_valid_gate(gate_idx_t gate) {
   return (gate < MAX_GATES || gate == DROP_GATE);
@@ -148,6 +47,8 @@ static inline int is_valid_gate(gate_idx_t gate) {
 
 const Commands IPLookup::cmds = {
     {"add", "IPLookupCommandAddArg", MODULE_CMD_FUNC(&IPLookup::CommandAdd),
+     Command::THREAD_UNSAFE},
+    {"delete", "IPLookupCommandDeleteArg", MODULE_CMD_FUNC(&IPLookup::CommandDelete),
      Command::THREAD_UNSAFE},
     {"clear", "EmptyArg", MODULE_CMD_FUNC(&IPLookup::CommandClear),
      Command::THREAD_UNSAFE}};
@@ -176,11 +77,10 @@ void IPLookup::DeInit() {
   }
 }
 
-void IPLookup::ProcessBatch(bess::PacketBatch *batch) {
+void IPLookup::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
   using bess::utils::Ethernet;
   using bess::utils::Ipv4;
 
-  gate_idx_t out_gates[bess::PacketBatch::kMaxBurst];
   gate_idx_t default_gate = default_gate_;
 
   int cnt = batch->cnt();
@@ -220,16 +120,12 @@ void IPLookup::ProcessBatch(bess::PacketBatch *batch) {
     ip_addr = _mm_set_epi32(a3, a2, a1, a0);
     ip_addr = _mm_shuffle_epi8(ip_addr, bswap_mask);
 
-#ifndef __OPTIMIZE__
-    lpm_lookupx4(lpm_, ip_addr, reinterpret_cast<uint64_t *>(next_hops), default_gate);
-#else
     rte_lpm_lookupx4(lpm_, ip_addr, next_hops, default_gate);
-#endif
 
-    out_gates[i + 0] = next_hops[0];
-    out_gates[i + 1] = next_hops[1];
-    out_gates[i + 2] = next_hops[2];
-    out_gates[i + 3] = next_hops[3];
+    EmitPacket(ctx, batch->pkts()[i], next_hops[0]);
+    EmitPacket(ctx, batch->pkts()[i + 1], next_hops[1]);
+    EmitPacket(ctx, batch->pkts()[i + 2], next_hops[2]);
+    EmitPacket(ctx, batch->pkts()[i + 3], next_hops[3]);
   }
 #endif
 
@@ -247,43 +143,54 @@ void IPLookup::ProcessBatch(bess::PacketBatch *batch) {
     ret = rte_lpm_lookup(lpm_, ip->dst.value(), &next_hop);
 
     if (ret == 0) {
-      out_gates[i] = next_hop;
+      EmitPacket(ctx, batch->pkts()[i], next_hop);
     } else {
-      out_gates[i] = default_gate;
+      EmitPacket(ctx, batch->pkts()[i], default_gate);
     }
   }
+}
 
-  RunSplit(out_gates, batch);
+ParsedPrefix IPLookup::ParseIpv4Prefix(
+    const std::string &prefix, uint64_t prefix_len) {
+  using bess::utils::Format;
+  be32_t net_addr;
+  be32_t net_mask;
+
+  if (!prefix.length()) {
+    return std::make_tuple(EINVAL, "prefix' is missing", be32_t(0));
+  }
+  if (!bess::utils::ParseIpv4Address(prefix, &net_addr)) {
+    return std::make_tuple(EINVAL,
+			   Format("Invalid IP prefix: %s", prefix.c_str()),
+			   be32_t(0));
+  }
+
+  if (prefix_len > 32) {
+    return std::make_tuple(EINVAL,
+			   Format("Invalid prefix length: %" PRIu64,
+				  prefix_len),
+			   be32_t(0));
+  }
+
+  net_mask = be32_t(bess::utils::SetBitsLow<uint32_t>(prefix_len));
+  if ((net_addr & ~net_mask).value()) {
+    return std::make_tuple(EINVAL,
+			   Format("Invalid IP prefix %s/%" PRIu64 " %x %x",
+				  prefix.c_str(), prefix_len, net_addr.value(),
+				  net_mask.value()),
+			   be32_t(0));
+  }
+  return std::make_tuple(0, "", net_addr);
 }
 
 CommandResponse IPLookup::CommandAdd(
     const bess::pb::IPLookupCommandAddArg &arg) {
-  using bess::utils::be32_t;
-
-  be32_t net_addr;
-  be32_t net_mask;
   gate_idx_t gate = arg.gate();
-
-  if (!arg.prefix().length()) {
-    return CommandFailure(EINVAL, "prefix' is missing");
-  }
-  if (!bess::utils::ParseIpv4Address(arg.prefix(), &net_addr)) {
-    return CommandFailure(EINVAL, "Invalid IP prefix: %s",
-                          arg.prefix().c_str());
-  }
-
   uint64_t prefix_len = arg.prefix_len();
-  if (prefix_len > 32) {
-    return CommandFailure(EINVAL, "Invalid prefix length: %" PRIu64,
-                          prefix_len);
-  }
-
-  net_mask = be32_t(~((1ull << (32 - prefix_len)) - 1));
-
-  if ((net_addr & ~net_mask).value()) {
-    return CommandFailure(EINVAL, "Invalid IP prefix %s/%" PRIu64 " %x %x",
-                          arg.prefix().c_str(), prefix_len, net_addr.value(),
-                          net_mask.value());
+  ParsedPrefix prefix = ParseIpv4Prefix(arg.prefix(), prefix_len);
+  if (std::get<0>(prefix)) {
+    return CommandFailure(std::get<0>(prefix), "%s",
+			  std::get<1>(prefix).c_str());
   }
 
   if (!is_valid_gate(gate)) {
@@ -293,9 +200,32 @@ CommandResponse IPLookup::CommandAdd(
   if (prefix_len == 0) {
     default_gate_ = gate;
   } else {
+    be32_t net_addr = std::get<2>(prefix);
     int ret = rte_lpm_add(lpm_, net_addr.value(), prefix_len, gate);
     if (ret) {
       return CommandFailure(-ret, "rpm_lpm_add() failed");
+    }
+  }
+
+  return CommandSuccess();
+}
+
+CommandResponse IPLookup::CommandDelete(
+    const bess::pb::IPLookupCommandDeleteArg &arg) {
+  uint64_t prefix_len = arg.prefix_len();
+  ParsedPrefix prefix = ParseIpv4Prefix(arg.prefix(), prefix_len);
+  if (std::get<0>(prefix)) {
+    return CommandFailure(std::get<0>(prefix), "%s",
+			  std::get<1>(prefix).c_str());
+  }
+
+  if (prefix_len == 0) {
+    default_gate_ = DROP_GATE;
+  } else {
+    be32_t net_addr = std::get<2>(prefix);
+    int ret = rte_lpm_delete(lpm_, net_addr.value(), prefix_len);
+    if (ret) {
+      return CommandFailure(-ret, "rpm_lpm_delete() failed");
     }
   }
 

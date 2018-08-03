@@ -124,7 +124,7 @@ inline flow *FlowGen::ScheduleFlow(uint64_t time_ns) {
   f->src_ip = be32_t(ip_src_base_ + rng_.GetRange(ip_src_range_));
   f->dst_ip = be32_t(ip_dst_base_ + rng_.GetRange(ip_dst_range_));
   f->src_port = be16_t(port_src_base_ + rng_.GetRange(port_src_range_));
-  f->dst_port = be16_t(port_src_base_ + rng_.GetRange(port_dst_range_));
+  f->dst_port = be16_t(port_dst_base_ + rng_.GetRange(port_dst_range_));
 
   /* compensate the fraction part by adding [0.0, 1.0) */
   f->packets_left = NewFlowPkts() + rng_.GetReal();
@@ -473,8 +473,8 @@ bess::Packet *FlowGen::FillPacket(struct flow *f) {
   return pkt;
 }
 
-void FlowGen::GeneratePackets(bess::PacketBatch *batch) {
-  uint64_t now = ctx.current_ns();
+void FlowGen::GeneratePackets(Context *ctx, bess::PacketBatch *batch) {
+  uint64_t now = ctx->current_ns;
 
   batch->clear();
   const int burst = ACCESS_ONCE(burst_);
@@ -509,22 +509,20 @@ void FlowGen::GeneratePackets(bess::PacketBatch *batch) {
   }
 }
 
-struct task_result FlowGen::RunTask(void *) {
+struct task_result FlowGen::RunTask(Context *ctx, bess::PacketBatch *batch,
+                                    void *) {
   if (children_overload_ > 0) {
     return {
-      .block = true,
-      .packets = 0,
-      .bits = 0,
+        .block = true, .packets = 0, .bits = 0,
     };
   }
 
   const int pkt_overhead = 24;
-  bess::PacketBatch batch;
 
-  GeneratePackets(&batch);
-  RunNextModule(&batch);
+  GeneratePackets(ctx, batch);
+  RunNextModule(ctx, batch);
 
-  uint32_t cnt = batch.cnt();
+  uint32_t cnt = batch->cnt();
   return {.block = (cnt == 0),
           .packets = cnt,
           .bits = ((template_size_ + pkt_overhead) * cnt) * 8};

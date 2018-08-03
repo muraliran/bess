@@ -135,7 +135,7 @@ static void init_eal(const char *prog_name, int mb_per_socket,
 
   if (no_huge) {
     rte_args.Append({"--no-huge"});
-    rte_args.Append({"-m", std::to_string(mb_per_socket)});
+    rte_args.Append({"-m", std::to_string(mb_per_socket * numa_count)});
   } else {
     std::string opt_socket_mem = std::to_string(mb_per_socket);
     for (int i = 1; i < numa_count; i++) {
@@ -216,7 +216,7 @@ void init_dpdk(const ::std::string &prog_name, int mb_per_socket,
   // FIXME: This is a temporary fix. If a new worker thread is allocated on the
   //        same core, background threads should migrate to another core.
   int default_core = determine_default_core();
-  ctx.SetNonWorker();
+  current_worker.SetNonWorker();
 
   init_eal(prog_name.c_str(), mb_per_socket, multi_instance, no_huge,
            default_core);

@@ -47,7 +47,8 @@ class Queue : public Module {
         burst_(),
         size_(),
         high_water_(),
-        low_water_() {
+        low_water_(),
+        stats_() {
     is_task_ = true;
     propagate_workers_ = false;
     max_allowed_workers_ = Worker::kMaxWorkers;
@@ -57,8 +58,9 @@ class Queue : public Module {
 
   void DeInit() override;
 
-  struct task_result RunTask(void *arg) override;
-  void ProcessBatch(bess::PacketBatch *batch) override;
+  struct task_result RunTask(Context *ctx, bess::PacketBatch *batch,
+                             void *arg) override;
+  void ProcessBatch(Context *ctx, bess::PacketBatch *batch) override;
 
   std::string GetDesc() const override;
 
@@ -96,6 +98,13 @@ class Queue : public Module {
 
   // Low water occupancy
   uint64_t low_water_;
+
+  // Accumulated statistics counters
+  struct {
+    uint64_t enqueued;
+    uint64_t dequeued;
+    uint64_t dropped;
+  } stats_;
 };
 
 #endif  // BESS_MODULES_QUEUE_H_

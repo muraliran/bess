@@ -31,20 +31,26 @@
 #ifndef BESS_UTILS_HISTOGRAM_H_
 #define BESS_UTILS_HISTOGRAM_H_
 
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
+#include <numeric>
 #include <vector>
 
 #include <glog/logging.h>
 
-// Class for general purpose histogram. T must be an integral type.
+// Class for general purpose histogram. T generally should be an
+// integral type, though floating point types will also work.
 // A bin b_i corresponds for the range [i * width, (i + 1) * width)
 // (note that it's left-closed and right-open), and (i * width) is used for its
 // representative value.
 template <typename T = uint64_t>
 class Histogram {
  public:
+  static_assert(std::is_arithmetic<T>::value, "Arithmetic type required.");
   struct Summary {
     size_t count;        // # of all samples. If 0, min, max and avg are also 0
     size_t above_range;  // # of samples beyond the histogram range
@@ -58,15 +64,52 @@ class Histogram {
   // Construct a new histogram with "num_buckets" buckets of width
   // "bucket_width".
   Histogram(size_t num_buckets, T bucket_width)
-      : bucket_width_(bucket_width), count_(), buckets_(num_buckets + 1) {}
+      : bucket_width_(bucket_width), buckets_(num_buckets + 1) {}
+
+  // Swap operator allows clean summarizing with external lock,
+  // when using a histogram on an active data stream.
+  // Create a new, empty histogram of the appropriate size
+  // while NOT holding a lock, then use tmphist.swap(datahist)
+  // while holding a lock.  Release the lock, and summarize
+  // from tmphist while new data accumulate into datahist.
+  void swap(Histogram &other) noexcept {
+    using std::swap;
+    swap(bucket_width_, other.bucket_width_);
+    swap(buckets_, other.buckets_);
+  }
+
+  // Move constructor and assignment operator to take from another
+  // histogram -- note that this is very much non-atomic.
+  Histogram(Histogram &&other) noexcept {
+    bucket_width_ = other.bucket_width_;
+    buckets_ = std::move(other.buckets_);
+  }
+
+  Histogram &operator=(Histogram &&other) noexcept {
+    bucket_width_ = other.bucket_width_;
+    buckets_ = std::move(other.buckets_);
+    return *this;
+  }
 
   // Inserts x into the histogram.
+  // Note: this particular insert is NOT atomic.
   void Insert(T x) {
     // The last element of the buckets_ is used to count data points above
     // the upper bound of the histogram range.
     size_t index = x / bucket_width_;
-    buckets_[std::min(index, buckets_.size() - 1)]++;
-    count_++;
+    index = std::min(index, buckets_.size() - 1);
+    buckets_[index].store(1 + buckets_[index].load(std::memory_order_relaxed),
+                          std::memory_order_relaxed);
+  }
+
+  // Inserts x into the histogram.
+  // Note: this particular insert IS atomic.
+  void AtomicInsert(T x) {
+    // The last element of the buckets_ is used to count data points above
+    // the upper bound of the histogram range.
+    size_t index = x / bucket_width_;
+    index = std::min(index, buckets_.size() - 1);
+    buckets_[index].fetch_add(1);
   }
 
   // Returns the summary of the histogram.
@@ -81,7 +124,8 @@ class Histogram {
   // percentile_values
   const Summary Summarize(const std::vector<double> &percentiles = {}) const {
     Summary ret = {};
-    ret.count = count_;
+    uint64_t count = std::accumulate(buckets_.begin(), buckets_.end(), 0);
+    ret.count = count;
     ret.above_range = buckets_.back();
     ret.percentile_values = std::vector<T>(percentiles.size());
 
@@ -109,8 +153,8 @@ class Histogram {
           DCHECK_LE(*percentile_it, 100.0);
 
           // Perform integer comparison first for the special case 100'th %-ile
-          if (count_so_far < count_ &&
-              (count_so_far * 100.0) / count_ - *percentile_it <
+          if (count_so_far < count &&
+              (count_so_far * 100.0) / count - *percentile_it <
                   std::numeric_limits<double>::epsilon()) {
             break;
           }
@@ -126,21 +170,35 @@ class Histogram {
       }
     }
 
-    ret.avg = (count_ > 0) ? total / count_ : 0;
+    ret.avg = (count > 0) ? total / count : 0;
     ret.total = total;
     return ret;
   }
 
-  void Reset() {
-    count_ = 0;
-    buckets_ = std::vector<size_t>(buckets_.size());
+  size_t num_buckets() const { return buckets_.size(); }
+  T bucket_width() const { return bucket_width_; }
+
+  size_t max_num_buckets() const {
+    // This constant is mainly to keep resets to a reasonable speed.
+    const size_t max_buckets = 10'000'000;
+    return std::min(max_buckets, buckets_.max_size());
+  }
+
+  // Resets all counters, and the count of such counters.
+  // Note that the number of buckets remains unchanged.
+  void Reset() { std::fill(buckets_.begin(), buckets_.end(), T()); }
+
+  // Resize the histogram.  Note that this resets it (i.e., this
+  // does not attempt to redistribute existing counts).
+  void Resize(size_t num_buckets, T bucket_width) {
+    buckets_ = std::move(std::vector<std::atomic<uint64_t>>(num_buckets + 1));
+    bucket_width_ = bucket_width;
   }
 
  private:
   // TODO(melvin): add support for logarithmic binning
   T bucket_width_;
-  size_t count_;
-  std::vector<size_t> buckets_;
+  std::vector<std::atomic<uint64_t>> buckets_;
 };
 
 #endif  // BESS_UTILS_HISTOGRAM_H_

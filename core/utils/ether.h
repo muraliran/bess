@@ -37,12 +37,15 @@
 
 #include "endian.h"
 
+#include "copy.h"
+
 namespace bess {
 namespace utils {
 
-struct[[gnu::packed]] Ethernet {
-  struct[[gnu::packed]] Address {
+struct [[gnu::packed]] Ethernet {
+  struct [[gnu::packed]] Address {
     Address() = default;
+    Address(const uint8_t *addr) { bess::utils::Copy(bytes, addr, kSize); }
     Address(const std::string &str);
 
     static const size_t kSize = 6;
@@ -56,6 +59,25 @@ struct[[gnu::packed]] Ethernet {
     std::string ToString() const;
 
     void Randomize();
+
+    bool IsBroadcast() const {
+      return bytes[0] == 0xff && bytes[1] == 0xff && bytes[2] == 0xff &&
+             bytes[3] == 0xff && bytes[4] == 0xff && bytes[5] == 0xff;
+    }
+
+    bool IsZero() const {
+      return bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0x00 &&
+             bytes[3] == 0x00 && bytes[4] == 0x00 && bytes[5] == 0x00;
+    }
+
+    bool operator<(const Address &o) const {
+      for (size_t i = 0; i < kSize; i++) {
+        if (bytes[i] < o.bytes[i]) {
+          return true;
+        }
+      }
+      return false;
+    }
 
     bool operator==(const Address &o) const {
       for (size_t i = 0; i < kSize; i++) {
@@ -75,7 +97,7 @@ struct[[gnu::packed]] Ethernet {
       return false;
     }
 
-    char bytes[kSize];
+    uint8_t bytes[kSize];
   };
 
   enum Type : uint16_t {
@@ -92,7 +114,7 @@ struct[[gnu::packed]] Ethernet {
   be16_t ether_type;
 };
 
-struct[[gnu::packed]] Vlan {
+struct [[gnu::packed]] Vlan {
   be16_t tci;
   be16_t ether_type;
 };

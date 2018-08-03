@@ -45,14 +45,14 @@ from . import protobuf_to_dict as pb_conv
 # pseudo-module multi-importer, used to build module message types
 from . import pm_import as _pm
 
-# Ugh: builtin_pb must be on path, as protoc generates python code
-# that assumes it can import files in that directory.  With our
-# split of builtin and plugin pb files we do not want 'from . import'
-# either, so just add 'builtin_pb' to sys.path.
-bipath = os.path.abspath(os.path.join(__file__, '..', 'builtin_pb'))
-if bipath not in sys.path:
-    sys.path.insert(1, bipath)
-del bipath
+# Ugh: builtin_pb and plugin_pb must be on path, as protoc generates python code
+# that assumes it can import files in that directory.
+old_path = list(sys.path)
+for extra in ('builtin_pb', 'plugin_pb'):
+    p = os.path.abspath(os.path.join(__file__, '..', extra))
+    if p not in sys.path:
+        sys.path.insert(1, p)
+del extra, p
 
 from .builtin_pb import service_pb2
 from .builtin_pb import bess_msg_pb2 as bess_msg
@@ -107,6 +107,8 @@ def _import_modules(name, subdir):
 
 module_pb = _import_modules('module_pb', None)
 port_msg = _import_modules('port_msg', 'ports')
+sys.path = old_path
+del old_path
 
 
 def _constraints_to_list(constraint):
@@ -152,6 +154,7 @@ class BESS(object):
         pass
 
     DEF_PORT = 10514
+    DEF_GRPC_URL = "localhost:" + str(DEF_PORT)
     BROKEN_CHANNEL = "AbnormalDisconnection"
 
     def __init__(self):
@@ -182,16 +185,16 @@ class BESS(object):
         else:
             self.status = connectivity
 
-    def connect(self, host='localhost', port=DEF_PORT):
+    def connect(self, grpc_url=DEF_GRPC_URL):
         if self.debug:
-            print('Connecting to %s:%d' % (host, port))
+            print('Connecting to ' + grpc_url)
 
         if self.is_connected():
             raise self.APIError('Already connected')
 
         self.status = None
-        self.peer = (host, port)
-        self.channel = grpc.insecure_channel('%s:%d' % (host, port))
+        self.peer = grpc_url
+        self.channel = grpc.insecure_channel(grpc_url)
         self.channel.subscribe(self._update_status, try_to_connect=True)
         self.stub = service_pb2.BESSControlStub(self.channel)
 
@@ -201,7 +204,7 @@ class BESS(object):
                                self.BROKEN_CHANNEL]:
                 self.disconnect()
                 raise self.APIError(
-                    'Connection to %s:%d failed' % (host, port))
+                    'Connection to {} failed'.format(grpc_url))
             time.sleep(0.1)
 
     # returns no error if already disconnected
@@ -361,7 +364,6 @@ class BESS(object):
         request.num_out_q = arg.pop('num_out_q', 0)
         request.size_inc_q = arg.pop('size_inc_q', 0)
         request.size_out_q = arg.pop('size_out_q', 0)
-        request.mac_addr = arg.pop('mac_addr', '')
 
         message_type = getattr(port_msg, driver + 'Arg', module_msg.EmptyArg)
         arg_msg = pb_conv.dict_to_protobuf(message_type, arg)
@@ -481,6 +483,49 @@ class BESS(object):
         else:
             return response
 
+    # It might be nice if we could name hook instances directly,
+    # rather than using <hook, module, direction, gate> tuples...
+    def run_gate_command(self, hook, mod, direction, gate, cmd, arg_type, arg):
+        request = bess_msg.GateHookCommandRequest()
+        request.hook.hook_name = hook
+        request.hook.module_name = mod
+        if direction == 'in':
+            request.hook.igate = gate
+        elif direction == 'out' or direction is None:
+            request.hook.ogate = gate
+        else:
+            raise self.APIError('direction must be either "out" or "in"')
+        request.cmd = cmd
+
+        try:
+            message_type = getattr(module_pb, arg_type)
+        except AttributeError as e:
+            raise self.APIError('Unknown arg "%s"' % arg_type)
+
+        try:
+            arg_msg = pb_conv.dict_to_protobuf(message_type, arg)
+        except (KeyError, ValueError) as e:
+            raise self.APIError(e)
+
+        request.hook.arg.Pack(arg_msg)
+
+        try:
+            response = self._request('GateHookCommand', request)
+        except self.Error as e:
+            e.info.update(hook_name=hook, module_name=mod, direction=direction,
+                          gate=gate, command=cmd, command_arg=arg)
+            raise
+
+        if response.HasField('data'):
+            response_type_str = response.data.type_url.split('.')[-1]
+            response_type = getattr(module_pb, response_type_str,
+                                    module_msg.EmptyArg)
+            result = response_type()
+            response.data.Unpack(result)
+            return result
+        else:
+            return response
+
     def _configure_gate_hook(self, hook, module,
                              arg, enable=None, direction=None, gate=None):
         if gate is None:
@@ -490,16 +535,16 @@ class BESS(object):
         if enable is None:
             enable = False
         request = bess_msg.ConfigureGateHookRequest()
-        request.hook_name = hook
-        request.module_name = module
+        request.hook.hook_name = hook
+        request.hook.module_name = module
         request.enable = enable
         if direction == 'in':
-            request.igate = gate
+            request.hook.igate = gate
         elif direction == 'out':
-            request.ogate = gate
+            request.hook.ogate = gate
         else:
             raise self.APIError('direction must be either "out" or "in"')
-        request.arg.Pack(arg)
+        request.hook.arg.Pack(arg)
         return self._request('ConfigureGateHook', request)
 
     def configure_resume_hook(self, hook, arg, enable=True):

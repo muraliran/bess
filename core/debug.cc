@@ -56,6 +56,7 @@
 #include "packet.h"
 #include "scheduler.h"
 #include "traffic_class.h"
+#include "opts.h"
 #include "utils/format.h"
 
 namespace bess {
@@ -371,21 +372,36 @@ static bool SkipSymbol(char *symbol) {
   _exit(EXIT_FAILURE);
 }
 
+[[noreturn]] static void abort_failure() {
+  abort();
+}
+
 [[ gnu::noinline, noreturn ]] void GoPanic() {
   if (oops_msg == "")
     oops_msg = DumpStack();
 
-  // Create a crash log file
-  try {
-    std::ofstream fp(P_tmpdir "/bessd_crash.log");
-    fp << oops_msg;
-    fp.close();
-  } catch (...) {
-    // Ignore any errors.
+  // Create a crash log file if not disabled.
+  if (!FLAGS_no_crashlog) {
+    try {
+      std::ofstream fp(P_tmpdir "/bessd_crash.log");
+      fp << oops_msg;
+      fp.close();
+    } catch (...) {
+      // Ignore any errors.
+    }
   }
 
-  // The default failure function of glog calls abort(), which causes SIGABRT
-  google::InstallFailureFunction(exit_failure);
+  if (FLAGS_core_dump) {
+    // Set SIGABRT back to the default to avoid catching the abort used to
+    // generate the core file.
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_DFL;
+    sigaction(SIGABRT, &sa, 0);
+    google::InstallFailureFunction(abort_failure);
+  } else {
+    google::InstallFailureFunction(exit_failure);
+  }
   LOG(FATAL) << oops_msg;
 }
 
@@ -394,15 +410,13 @@ static bool SkipSymbol(char *symbol) {
 // TODO: Only use async-signal-safe operations in the signal handler.
 static void TrapHandler(int sig_num, siginfo_t *info, void *ucontext) {
   std::ostringstream oops;
-  struct ucontext *uc;
+  auto *uc = static_cast<ucontext_t *>(ucontext);
   bool is_fatal = (sig_num != SIGUSR1);
   static volatile bool already_trapped = false;
 
   // avoid recursive traps
   if (is_fatal && !__sync_bool_compare_and_swap(&already_trapped, false, true))
     return;
-
-  uc = (struct ucontext *)ucontext;
 
 #if __i386
   trap_ip = reinterpret_cast<void *>(uc->uc_mcontext.gregs[REG_EIP]);

@@ -39,12 +39,12 @@
 #include <utility>
 #include <vector>
 
+#include "commands.h"
 #include "event.h"
 #include "gate.h"
 #include "message.h"
 #include "metadata.h"
 #include "packet.h"
-#include "scheduler.h"
 
 using bess::gate_idx_t;
 
@@ -52,6 +52,24 @@ using bess::gate_idx_t;
 #define MAX_NUMA_NODE 16
 #define MAX_TASKS_PER_MODULE 32
 #define UNCONSTRAINED_SOCKET ((0x1ull << MAX_NUMA_NODE) - 1)
+
+struct Context {
+  // Set by task scheduler, read by modules
+  uint64_t current_tsc;
+  uint64_t current_ns;
+  int wid;
+  Task *task;
+
+  // Set by module scheduler, read by a task scheduler
+  uint64_t silent_drops;
+
+  // Temporary variables to be accessed and updated by module scheduler
+  gate_idx_t current_igate;
+  int gate_with_hook_cnt = 0;
+  int gate_without_hook_cnt = 0;
+  gate_idx_t gate_with_hook[bess::PacketBatch::kMaxBurst];
+  gate_idx_t gate_without_hook[bess::PacketBatch::kMaxBurst];
+};
 
 using module_cmd_func_t =
     pb_func_t<CommandResponse, Module, google::protobuf::Any>;
@@ -81,26 +99,6 @@ static inline module_init_func_t MODULE_INIT_FUNC(
 }
 
 class Module;
-
-using bess::metadata::Pipeline;
-//using bess::metadata::Pipelines;
-
-// Describes a single command that can be issued to a module.
-struct Command {
-  enum ThreadSafety { THREAD_UNSAFE = 0, THREAD_SAFE = 1 };
-
-  std::string cmd;
-  std::string arg_type;
-  module_cmd_func_t func;
-
-  // If set to THREAD_SAFE, workers don't need to be paused in order to run
-  // this command.
-  ThreadSafety mt_safe;
-};
-
-using Commands = std::vector<struct Command>;
-using bess::metadata::Attribute;
-using Attributes = std::vector<struct Attribute>;
 
 // A class for managing modules of 'a particular type'.
 // Creates new modules and forwards module-specific commands.
@@ -144,7 +142,7 @@ class ModuleBuilder {
   //static const std::map<std::string, Pipeline *> &all_pipelines();
   // -- muralir--
 
-  /* returns a pointer to the created module */
+  // returns a pointer to the created module
   Module *CreateModule(const std::string &name,
                        bess::metadata::Pipeline *pipeline) const;
 
@@ -186,10 +184,8 @@ class ModuleBuilder {
 
 class Task;
 
-/*!
- * Results from checking for constraints. Failing constraints can indicate
- * whether the failure is fatal or not.
- */
+// Results from checking for constraints. Failing constraints can indicate
+// whether the failure is fatal or not.
 enum CheckConstraintResult {
   CHECK_OK = 0,
   CHECK_NONFATAL_ERROR = 1,
@@ -232,15 +228,23 @@ class alignas(64) Module {
   // NOTE: this function will be called even if Init() has failed.
   virtual void DeInit();
 
-  virtual struct task_result RunTask(void *arg);
-  virtual void ProcessBatch(bess::PacketBatch *batch);
+  // Initiates a new task with 'ctx', generating a new workload (a set of
+  // packets in 'batch') and forward the workloads to be processed and forward
+  // the workload to next modules. It can also get per-module specific 'arg'
+  // as input. 'batch' is pre-allocated for efficiency.
+  // It returns info about generated workloads, 'task_result'.
+  virtual struct task_result RunTask(Context *ctx, bess::PacketBatch *batch,
+                                     void *arg);
 
-  /*
-   * If a derived Module overrides OnEvent and doesn't return  -ENOTSUP for a
-   * particular Event `e` it will be invoked for each instance of the derived
-   * Module whenever `e` occours. See `event.h` for details about the various
-   * event types and their semantics/requirements when it comes to modules.
-   */
+  // Process a set of packets in packet batch with the contexts 'ctx'.
+  // A module should handle all packets in a batch properly as follows:
+  // 1) forwards to the next modules, or 2) free
+  virtual void ProcessBatch(Context *ctx, bess::PacketBatch *batch);
+
+  // If a derived Module overrides OnEvent and doesn't return  -ENOTSUP for a
+  // particular Event `e` it will be invoked for each instance of the derived
+  // Module whenever `e` occours. See `event.h` for details about the various
+  // event types and their semantics/requirements when it comes to modules.
   virtual int OnEvent(bess::Event) { return -ENOTSUP; }
 
   virtual std::string GetDesc() const { return ""; }
@@ -258,51 +262,45 @@ class alignas(64) Module {
 
   CommandResponse InitWithGenericArg(const google::protobuf::Any &arg);
 
-  const ModuleBuilder *module_builder() const { return module_builder_; }
+  // With the contexts('ctx'), pass packet batch ('batch') to the next module
+  // connected with 'ogate_idx'
+  inline void RunChooseModule(Context *ctx, gate_idx_t ogate_idx,
+                              bess::PacketBatch *batch);
 
-  bess::metadata::Pipeline *pipeline() const { return pipeline_; }
-  //Pipelines pipelines() const { return pipelines_; }
-  //Pipeline* get_pipeline( const char* pp_id) {
-  //    for (const auto& it : pipelines_) {
-  //        if (!strcmp(it->pipeline_id(), pp_id)) {
-  //            return it;
-  //        }
-  //    }
-  //    return nullptr;
-  //}
+  // With the contexts('ctx'), pass packet batch ('batch') to the default
+  // next module ('ogate_idx' == 0)
+  inline void RunNextModule(Context *ctx, bess::PacketBatch *batch);
 
-  const std::string &name() const { return name_; }
+  // With the contexts('ctx'), drop a packet. Dropped packets will be freed.
+  inline void DropPacket(Context *ctx, bess::Packet *pkt);
 
-  /* Pass packets to the next module.
-   * Packet deallocation is callee's responsibility. */
-  inline void RunChooseModule(gate_idx_t ogate_idx, bess::PacketBatch *batch);
+  // With the contexts('ctx'), emit (forward) a packet ('pkt') to the next
+  // module connected with 'ogate'
+  inline void EmitPacket(Context *ctx, bess::Packet *pkt, gate_idx_t ogate = 0);
 
-  /* Wrapper for single-output modules */
-  inline void RunNextModule(bess::PacketBatch *batch);
+  // Process OGate hooks and forward packet batches into next modules.
+  inline void ProcessOGates(Context *ctx);
 
   /*
    * Split a batch into several, one for each ogate
    * NOTE:
    *   1. Order is preserved for packets with the same gate.
    *   2. No ordering guarantee for packets with different gates.
-   */
-  void RunSplit(const gate_idx_t *ogates, bess::PacketBatch *mixed_batch);
-
-  /* returns -errno if fails */
-  int ConnectModules(gate_idx_t ogate_idx, Module *m_next,
-                     gate_idx_t igate_idx);
-  int DisconnectModulesUpstream(gate_idx_t igate_idx);
-  int DisconnectModules(gate_idx_t ogate_idx);
+   *
+   * Update on 11/27/2017, by Shinae Woo
+   * This interface will become DEPRECATED.
+   * Consider using new interfafces supporting faster data-plane support
+   * DropPacket()/EmitPacket()
+   * */
+  [[deprecated(
+      "use the new API EmitPacket()/DropPacket() instead")]] inline void
+  RunSplit(Context *ctx, const gate_idx_t *ogates,
+           bess::PacketBatch *mixed_batch);
 
   // Register a task.
   task_id_t RegisterTask(void *arg);
 
-  /* Modules should call this function to declare additional metadata
-   * attributes at initialization time.
-   * Static metadata attributes that are defined in module class are
-   * automatically registered, so only attributes specific to a module
-   * 'instance' need this function.
-   *
+  /*
    * Note on Pipeline: A default pipeline is created on system startup.
    * In order to not get into a complicated looping of graph paths, complicating
    * scoping of the attributes, it is reccoemended to defined multiple pipelines.
@@ -312,8 +310,14 @@ class alignas(64) Module {
    * The graph path for packet flow is not defined by pipelines but one can
    * customize flows by defining appropriate attributes in a pipeline scope,
    * thus providing a lot more flexibility in flow definitions.
-   *
-   * Returns its allocated ID (>= 0), or a negative number for error */
+   */
+  // Modules should call this function to declare additional metadata
+  // attributes at initialization time.
+  // Static metadata attributes that are defined in module class are
+  // automatically registered, so only attributes specific to a module
+  // 'instance'
+  // need this function.
+  // Returns its allocated ID (>= 0), or a negative number for error */
   int AddMetadataAttr(const std::string &name, size_t size,
                       bess::metadata::Attribute::AccessMode mode);
    //                   const char* pipeline);
@@ -341,6 +345,24 @@ class alignas(64) Module {
   //  }
   //  return all_attrs(pp);
   //}
+ 
+  const ModuleBuilder *module_builder() const { return module_builder_; }
+
+  bess::metadata::Pipeline *pipeline() const { return pipeline_; }
+  // -- muralir
+  //Pipelines pipelines() const { return pipelines_; }
+  //Pipeline* get_pipeline( const char* pp_id) {
+  //    for (const auto& it : pipelines_) {
+  //        if (!strcmp(it->pipeline_id(), pp_id)) {
+  //            return it;
+  //        }
+  //    }
+  //    return nullptr;
+  //}
+  //-- muralir
+
+  const std::string &name() const { return name_; }
+
   const std::vector<bess::metadata::Attribute> &all_attrs() const {
     return attrs_;
   }
@@ -353,6 +375,8 @@ class alignas(64) Module {
   //  }
   //  return Attributes();
   //}
+ 
+  bool is_task() const { return is_task_; }
 
   const std::vector<const Task *> &tasks() const { return tasks_; }
 
@@ -375,16 +399,12 @@ class alignas(64) Module {
 
   const std::vector<bess::OGate *> &ogates() const { return ogates_; }
 
-  /*!
-   * Compute placement constraints based on the current module and all
-   * downstream modules (i.e., modules connected to out ports.
-   */
+  // Compute placement constraints based on the current module and all
+  // downstream modules (i.e., modules connected to out ports.
   placement_constraint ComputePlacementConstraints(
       std::unordered_set<const Module *> *visited) const;
 
-  /*!
-   * Reset the set of active workers.
-   */
+  // Reset the set of active workers.
   void ResetActiveWorkerSet() {
     std::fill(active_workers_.begin(), active_workers_.end(), false);
     visited_tasks_.clear();
@@ -392,26 +412,32 @@ class alignas(64) Module {
 
   const std::vector<bool> &active_workers() const { return active_workers_; }
 
-  /*!
-   * Number of active workers attached to this module.
-   */
+  // Number of active workers attached to this module.
   inline size_t num_active_workers() const {
     return std::count_if(active_workers_.begin(), active_workers_.end(),
                          [](bool b) { return b; });
   }
 
-  /*!
-   * Check if we have already seen a task
-   */
+  // True if any worker attached to this module is running.
+  inline bool HasRunningWorker() const {
+    for (int wid = 0; wid < Worker::kMaxWorkers; wid++) {
+      if (active_workers_[wid] && is_worker_running(wid)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Check if we have already seen a task
   inline bool HaveVisitedWorker(const Task *task) const {
     return std::find(visited_tasks_.begin(), visited_tasks_.end(), task) !=
            visited_tasks_.end();
   }
 
-  /*!
-   * Number of tasks that access this module
-   */
+  // Number of tasks that access this module
   inline size_t num_active_tasks() const { return visited_tasks_.size(); }
+
+  const std::vector<Module *> &parent_tasks() const { return parent_tasks_; };
 
   virtual void AddActiveWorker(int wid, const Task *task);
 
@@ -419,7 +445,6 @@ class alignas(64) Module {
 
   // For testing.
   int children_overload() const { return children_overload_; };
-  const std::vector<Module *> &parent_tasks() const { return parent_tasks_; };
 
   // Signals to parent task(s) that module is overloaded.
   // TODO: SignalOverload and SignalUnderload are only safe if the module is not
@@ -450,8 +475,22 @@ class alignas(64) Module {
   }
 
  private:
+  // Module Destory, connect, task managements are only available with
+  // ModuleGraph class
+  int ConnectGate(gate_idx_t ogate_idx, Module *m_next, gate_idx_t igate_idx);
+  int DisconnectGate(gate_idx_t ogate_idx);
+  void DisconnectModulesUpstream(gate_idx_t igate_idx);
   void DestroyAllTasks();
   void DeregisterAllAttributes();
+  void AddParentTask(Module *task) { parent_tasks_.push_back(task); }
+  void ClearParentTasks() { parent_tasks_.clear(); }
+
+  // Destroy a module and cleaning up including
+  // calling per-module Deinit() function,
+  // disconnect from/to upstream/downstream modules,
+  // destory all tasks if it is a task module
+  // deregister all metadata attributes if it has
+  void Destroy();
 
   void set_name(const std::string &name) { name_ = name; }
   void set_module_builder(const ModuleBuilder *builder) {
@@ -517,12 +556,13 @@ class alignas(64) Module {
   DISALLOW_COPY_AND_ASSIGN(Module);
 };
 
-static inline void deadend(bess::PacketBatch *batch) {
-  ctx.incr_silent_drops(batch->cnt());
+static inline void deadend(Context *ctx, bess::PacketBatch *batch) {
+  ctx->silent_drops += batch->cnt();
   bess::Packet::Free(batch);
+  batch->clear();
 }
 
-inline void Module::RunChooseModule(gate_idx_t ogate_idx,
+inline void Module::RunChooseModule(Context *ctx, gate_idx_t ogate_idx,
                                     bess::PacketBatch *batch) {
   bess::OGate *ogate;
 
@@ -531,33 +571,134 @@ inline void Module::RunChooseModule(gate_idx_t ogate_idx,
   }
 
   if (unlikely(ogate_idx >= ogates_.size())) {
-    deadend(batch);
+    deadend(ctx, batch);
     return;
   }
 
   ogate = ogates_[ogate_idx];
 
   if (unlikely(!ogate)) {
-    deadend(batch);
+    deadend(ctx, batch);
     return;
   }
+
   for (auto &hook : ogate->hooks()) {
     hook->ProcessBatch(batch);
   }
 
-  for (auto &hook : ogate->igate()->hooks()) {
-    hook->ProcessBatch(batch);
+  ctx->task->AddToRun(ogate->igate(), batch);
+}
+
+inline void Module::RunNextModule(Context *ctx, bess::PacketBatch *batch) {
+  RunChooseModule(ctx, 0, batch);
+}
+
+inline void Module::DropPacket(Context *ctx, bess::Packet *pkt) {
+  ctx->task->dead_batch()->add(pkt);
+  if (static_cast<size_t>(ctx->task->dead_batch()->cnt()) >=
+      bess::PacketBatch::kMaxBurst) {
+    deadend(ctx, ctx->task->dead_batch());
+  }
+}
+
+inline void Module::EmitPacket(Context *ctx, bess::Packet *pkt,
+                               gate_idx_t ogate_idx) {
+  // Check if valid ogate is set
+  if (unlikely(ogates_.size() <= ogate_idx) || unlikely(!ogates_[ogate_idx])) {
+    DropPacket(ctx, pkt);
+    return;
   }
 
-  ctx.set_current_igate(ogate->igate_idx());
-  (static_cast<Module *>(ogate->next()))->ProcessBatch(batch);
+  Task *task = ctx->task;
+
+  // Put a packet into the ogate
+  bess::OGate *ogate = ogates_[ogate_idx];
+  bess::IGate *igate = ogate->igate();
+  bess::PacketBatch *batch = task->get_gate_batch(ogate);
+  if (!batch) {
+    if (!ogate->hooks().empty()) {
+      // Having separate batch to run ogate hooks
+      batch = task->AllocPacketBatch();
+      task->set_gate_batch(ogate, batch);
+      ctx->gate_with_hook[ctx->gate_with_hook_cnt++] = ogate_idx;
+    } else {
+      // If no ogate hooks, just use next igate batch
+      batch = task->get_gate_batch(igate);
+      if (batch == nullptr) {
+        batch = task->AllocPacketBatch();
+        task->AddToRun(igate, batch);
+        task->set_gate_batch(ogate, batch);
+      } else {
+        task->set_gate_batch(ogate, task->get_gate_batch(igate));
+      }
+      ctx->gate_without_hook[ctx->gate_without_hook_cnt++] = ogate_idx;
+    }
+  }
+
+  if (static_cast<size_t>(batch->cnt()) >= bess::PacketBatch::kMaxBurst) {
+    if (!ogate->hooks().empty()) {
+      for (auto &hook : ogate->hooks()) {
+        hook->ProcessBatch(task->get_gate_batch(ogate));
+      }
+      task->AddToRun(igate, task->get_gate_batch(ogate));
+      batch = task->AllocPacketBatch();
+      task->set_gate_batch(ogate, batch);
+    } else {
+      // allocate a new batch and push
+      batch = task->AllocPacketBatch();
+      task->set_gate_batch(ogate, batch);
+      task->AddToRun(igate, batch);
+    }
+  }
+
+  batch->add(pkt);
 }
 
-inline void Module::RunNextModule(bess::PacketBatch *batch) {
-  RunChooseModule(0, batch);
+inline void Module::ProcessOGates(Context *ctx) {
+  Task *task = ctx->task;
+
+  // Running ogate hooks, then add next igate to be scheduled
+  for (int i = 0; i < ctx->gate_with_hook_cnt; i++) {
+    bess::OGate *ogate = ogates_[ctx->gate_with_hook[i]];  // should not be null
+    for (auto &hook : ogate->hooks()) {
+      hook->ProcessBatch(task->get_gate_batch(ogate));
+    }
+    task->AddToRun(ogate->igate(), task->get_gate_batch(ogate));
+    task->set_gate_batch(ogate, nullptr);
+  }
+
+  // Clear packet batch for ogates without hook
+  for (int i = 0; i < ctx->gate_without_hook_cnt; i++) {
+    bess::OGate *ogate =
+        ogates_[ctx->gate_without_hook[i]];  // should not be null
+    task->set_gate_batch(ogate, nullptr);
+  }
+
+  ctx->gate_with_hook_cnt = 0;
+  ctx->gate_without_hook_cnt = 0;
 }
 
-/* run all per-thread initializers */
+inline void Module::RunSplit(Context *ctx, const gate_idx_t *out_gates,
+                             bess::PacketBatch *mixed_batch) {
+  int pkt_cnt = mixed_batch->cnt();
+  if (unlikely(pkt_cnt <= 0)) {
+    return;
+  }
+
+  int gate_cnt = ogates_.size();
+  if (unlikely(gate_cnt <= 0)) {
+    deadend(ctx, mixed_batch);
+    return;
+  }
+
+  for (int i = 0; i < pkt_cnt; i++) {
+    EmitPacket(ctx, mixed_batch->pkts()[i], out_gates[i]);
+  }
+
+  mixed_batch->clear();
+}
+
+// run all per-thread initializers
 void init_module_worker(void);
 
 #if SN_TRACE_MODULES
@@ -565,10 +706,6 @@ void _trace_before_call(Module *mod, Module *next, bess::PacketBatch *batch);
 
 void _trace_after_call(void);
 #endif
-
-static inline gate_idx_t get_igate() {
-  return ctx.current_igate();
-}
 
 template <typename T>
 static inline int is_active_gate(const std::vector<T *> &gates,

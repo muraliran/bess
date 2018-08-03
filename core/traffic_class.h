@@ -332,13 +332,21 @@ class WeightedFairTrafficClass final : public TrafficClass {
   struct ChildData {
     bool operator<(const ChildData &right) const {
       // Reversed so that priority_queue is a min priority queue.
-      return right.pass_ < pass_;
+      return right.pass < pass;
     }
 
-    int64_t stride_;
-    int64_t pass_;
+    int64_t stride;
 
-    TrafficClass *c_;
+    // NOTE: while in the code example in the original Stride Scheduler
+    // [Waldspurgger95] maintains "pass" and "remain" (penalty) separately,
+    // we can safely multiplex these variables in a union since they are never
+    // used at the same time.
+    union {
+      int64_t pass;
+      int64_t remain;
+    };
+
+    TrafficClass *c;
   };
 
   WeightedFairTrafficClass(const std::string &name, resource_t resource)
@@ -385,6 +393,16 @@ class WeightedFairTrafficClass final : public TrafficClass {
   }
 
  private:
+  // Returns the pass value of the first child to be scheduled next,
+  // or 0 if there is no runnable child (i.e., the priority queue is empty)
+  int64_t NextPass() const {
+    if (runnable_children_.empty()) {
+      return 0;
+    } else {
+      return runnable_children_.top().pass;
+    }
+  }
+
   // The resource that we are sharing.
   resource_t resource_;
 
@@ -557,11 +575,11 @@ class LeafTrafficClass final : public TrafficClass {
  public:
   static const uint64_t kInitialWaitCycles = (1ull << 14);
 
-  explicit LeafTrafficClass(const std::string &name, const Task &task)
+  explicit LeafTrafficClass(const std::string &name, Task *task)
       : TrafficClass(name, POLICY_LEAF, false),
         task_(task),
         wait_cycles_(kInitialWaitCycles) {
-    task_.Attach(this);
+    task_->Attach(this);
   }
 
   ~LeafTrafficClass() override;
@@ -585,7 +603,7 @@ class LeafTrafficClass final : public TrafficClass {
     TrafficClass::UnblockTowardsRootSetBlocked(tsc, false);
   }
 
-  const Task *task() const { return &task_; }
+  Task *task() const { return task_; }
 
   void FinishAndAccountTowardsRoot(SchedWakeupQueue *wakeup_queue,
                                    [[maybe_unused]] TrafficClass *child,
@@ -599,7 +617,7 @@ class LeafTrafficClass final : public TrafficClass {
   }
 
  private:
-  Task task_;
+  Task *task_;
 
   uint64_t wait_cycles_;
 };
@@ -667,7 +685,7 @@ class TrafficClassBuilder {
 
   struct LeafArgs {
     LeafFakeType dummy;
-    Task task;
+    Task *task;
   };
 
   // These CreateTree(...) functions enable brace-initialized construction of a

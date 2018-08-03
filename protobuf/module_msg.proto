@@ -106,13 +106,17 @@ message FlowGenCommandSetBurstArg {
 }
 
 /**
- * The HashLB module has a command `set_mode(...)` which takes one parameter.
- * The mode specifies whether the load balancer will hash over the src/dest ethernet header (l2),
- * over the src/dest IP addresses (l3), or over the flow 5-tuple (l4).
+ * The HashLB module has a command `set_mode(...)` which takes two parameters.
+ * The `mode` parameter specifies whether the load balancer will hash over the
+ * src/dest ethernet header (l2), over the src/dest IP addresses (l3), or over
+ * the flow 5-tuple (l4).  Alternatively, if the `fields` parameter is set, the
+ * load balancer will hash over the N-tuple with the specified offsets and
+ * sizes.
  * Example use in bessctl: `lb.set_mode('l2')`
  */
 message HashLBCommandSetModeArg {
-  string mode = 1; /// What fields to hash over, l1, l2, or l3 are only valid values.
+  string mode = 1; /// What fields to hash over, l2, l3, and l4 are only valid values.
+  repeated Field fields = 2; /// A list of fields that define a custom tuple.
 }
 
 /**
@@ -134,6 +138,16 @@ message IPLookupCommandAddArg {
   string prefix = 1; /// The CIDR IP part of the prefix to match
   uint64 prefix_len = 2; /// The prefix length
   uint64 gate = 3; /// The number of the gate to forward matching traffic on.
+}
+
+/**
+ * The IPLookup module has a command `delete(...)` which takes two paramters.
+ * This function accepts the routing rules -- CIDR prefix, CIDR prefix length,
+ * Example use in bessctl: `table.delete(prefix='10.0.0.0', prefix_len=8)`
+ */
+message IPLookupCommandDeleteArg {
+  string prefix = 1; /// The CIDR IP part of the prefix to match
+  uint64 prefix_len = 2; /// The prefix length
 }
 
 /**
@@ -223,12 +237,18 @@ message MeasureCommandGetSummaryArg {
 
 /**
  * The Measure module function `get_summary()` returns the following values.
+ * Note that the resolution value tells you how grainy the samples are,
+ * e.g., 100 means that anything from 0-99 ns counts as "0",
+ * anything from 100-199 counts as "100", and so on.  The average
+ * is of samples using this graininess, but (being a result of division)
+ * may not be a multiple of the resolution.
  */
 message MeasureCommandGetSummaryResponse {
   message Histogram {
     uint64 count = 1; /// Total # of measured data points, including above_range
     uint64 above_range = 2; /// # of data points for the "too large value" bucket
-    uint64 min_ns = 3;;
+    uint64 resolution_ns = 8; /// resolution of measured data
+    uint64 min_ns = 3;
     uint64 avg_ns = 4;
     uint64 max_ns = 5;
     uint64 total_ns = 6;
@@ -319,8 +339,11 @@ message QueueCommandGetStatusArg {}
  * size.
  */
 message QueueCommandGetStatusResponse {
-  uint64 count = 1; /// The number of packets currently in the queue.
-  uint64 size = 2;  /// The maximum number of packets the queue can contain.
+  uint64 count = 1;    /// The number of packets currently in the queue.
+  uint64 size = 2;     /// The maximum number of packets the queue can contain.
+  uint64 enqueued = 3; /// total enqueued
+  uint64 dequeued = 4; /// total dequeued
+  uint64 dropped = 5;  /// total dropped
 }
 
 /**
@@ -380,26 +403,6 @@ message WildcardMatchCommandSetDefaultGateArg {
 }
 
 /**
- * A rule from the WildcardMatch module.
- */
-message WildcardMatchRule {
-  uint64 gate = 1; /// Traffic matching this new rule will be sent to this gate.
-  int64 priority = 2; ///If a packet matches multiple rules, the rule with higher priority will be applied. If priorities are equal behavior is undefined.
-  repeated uint64 values = 3; /// The values to check for in each fieild.
-  repeated uint64 masks = 4; /// The bitmask for each field -- set 0x0 to ignore the field altogether.
-}
-
-/**
- * The module WildcardMatch has a function `get_rules()` which
- * returns the current set of running rules.
- */
-message WildcardMatchCommandGetRulesResponse {
-  uint64 default_gate = 1; /// The default gate
-  repeated Field fields = 2; /// The fields provided in initializing WCM
-  repeated WildcardMatchRule rules = 3; /// All rules provided via calls to `WilcardMatch.add(...)`
-}
-
-/**
  * The module ACL creates an access control module which by default blocks all traffic, unless it contains a rule which specifies otherwise.
  * Examples of ACL can be found in [acl.bess](https://github.com/NetSys/bess/blob/master/bessctl/conf/samples/acl.bess)
  *
@@ -451,12 +454,17 @@ message BufferArg {
 }
 
 /**
- * The Bypass module forwards packets without any processing. It requires no parameters to initialize. Bypass is useful primarily for testing and performance evaluation.
+ * The Bypass module forwards packets by emulating pre-defined packet processing overhead.
+ * It burns cpu cycles per_batch, per_packet, and per-bytes.
+ * Bypass is useful primarily for testing and performance evaluation.
  *
  * __Input Gates__: 1
  * __Output Gates__: 1
  */
 message BypassArg {
+  uint32 cycles_per_batch = 1;
+  uint32 cycles_per_packet = 2;
+  uint32 cycles_per_byte = 3;
 }
 
 /**
@@ -528,11 +536,11 @@ message FlowGenArg {
 }
 
 /**
-* The GenericDecap module strips off the first few bytes of data from a packet.
-*
-* __Input Gates__: 1
-* __Ouptut Gates__: 1
-*/
+ * The GenericDecap module strips off the first few bytes of data from a packet.
+ *
+ * __Input Gates__: 1
+ * __Ouptut Gates__: 1
+ */
 message GenericDecapArg {
   uint64 bytes = 1; /// The number of bytes to strip off.
 }
@@ -541,8 +549,8 @@ message GenericDecapArg {
  * The GenericEncap module adds a header to packets passing through it.
  * Takes a list of fields. Each field is either:
  *
- *  1. {'size': X, 'value': Y}		(for constant values)
- *  2. {'size': X, 'attribute': Y}	(for metadata attributes)
+ *  1. {'size': X, 'value': Y}          (for constant values)
+ *  2. {'size': X, 'attribute': Y}      (for metadata attributes)
  *
  * e.g.: GenericEncap([{'size': 4, 'value': 0xdeadbeef},
  *                     {'size': 2, 'attribute': 'foo'},
@@ -572,7 +580,8 @@ message GenericEncapArg {
 
 /**
  * The HashLB module partitions packets between output gates according to either
- * a hash over their MAC src/dst (mode=l2), their IP src/dst (mode=l3), or the full IP/TCP 5-tuple (mode=l4).
+ * a hash over their MAC src/dst (mode=l2), their IP src/dst (mode=l3), the full
+ * IP/TCP 5-tuple (mode=l4), or the N-tuple defined by `fields`.
  *
  * __Input Gates__: 1
  * __Output Gates__: many (configurable)
@@ -580,6 +589,7 @@ message GenericEncapArg {
 message HashLBArg {
   repeated int64 gates = 1; /// A list of gate numbers over which to partition packets
   string mode = 2; /// The mode (l2, l3, or l4) for the hash function.
+  repeated Field fields = 3; /// A list of fields that define a custom tuple.
 }
 
 /**
@@ -634,15 +644,18 @@ message MACSwapArg {
  * The measure module tracks latencies, packets per second, and other statistics.
  * It should be paired with a Timestamp module, which attaches a timestamp to packets.
  * The measure module will log how long (in nanoseconds) it has been for each packet it received since it was timsestamped.
- * An example of the Measure module in use is in [`bess/bessctl/conf/perftest/latency/bess`](https://github.com/NetSys/bess/blob/master/bessctl/conf/samples/latency.bess).
+ * This module is somewhat experimental and undergoing various changes.
+ * There is a test for the the Measure module in [`bessctl/module_tests/timestamp.py`](https://github.com/NetSys/bess/blob/master/bessctl/module_tests/timestamp.py).
  *
  * __Input Gates__: 1
  * __Output Gates__: 1
  */
 message MeasureArg {
-  int64 warmup = 1; /// How long to wait, in seconds, between starting the module and taking measurements.
+  // int64 warmup = 1; /// removed: instead of warmup delay, user should Clear()
   uint64 offset = 2; /// Where to store the current time within the packet, offset in bytes.
   double jitter_sample_prob = 3; /// How often the module should sample packets for inter-packet arrival measurements (to measure jitter).
+  uint64 latency_ns_max = 4; /// maximum latency expected, in ns (default 0.1 s)
+  uint32 latency_ns_resolution = 5; /// resolution, in ns (default 100)
 }
 
 /**
@@ -665,18 +678,63 @@ message MetadataTestArg {
 }
 
 /**
- * The NAT module implements IPv4 address/port translation, rewriting packet
- * source addresses with external addresses as specified. Currently only
- * supports TCP/UDP/ICMP. Note that address/port in packet payload
- * (e.g., FTP, SIP, RTSP, etc.) are NOT translated.
+ * The NAT module implements Dynamic IPv4 address/port translation,
+ * rewriting packet source addresses with external addresses as specified,
+ * and destination addresses for packets on the reverse direction.
+ * L3/L4 checksums are updated correspondingly.
  * To see an example of NAT in use, see:
  * [`bess/bessctl/conf/samples/nat.bess`](https://github.com/NetSys/bess/blob/master/bessctl/conf/samples/nat.bess)
  *
- * __Input Gates__: 2
- * __Output Gates__: 2
+ * Currently only supports TCP/UDP/ICMP.
+ * Note that address/port in packet payload (e.g., FTP) are NOT translated.
+ *
+ * __Input Gates__: 2 (0 for internal->external, and 1 for external->internal direction)
+ * __Output Gates__: 2 (same as the input gate)
  */
 message NATArg {
-  repeated string ext_addrs = 1; /// list of external IP addresses
+  message PortRange {
+    uint32 begin = 1;
+    uint32 end = 2;
+    bool suspended = 3;
+  }
+  message ExternalAddress {
+    string ext_addr = 1;
+    repeated PortRange port_ranges = 2;
+  }
+  repeated ExternalAddress ext_addrs = 1; /// list of external IP addresses
+}
+
+/**
+ * Static NAT module implements one-to-one translation of source/destination
+ * IPv4 addresses. No port number is translated.
+ * L3/L4 checksums are updated correspondingly.
+ * To see an example of NAT in use, see:
+ * [`bess/bessctl/conf/samples/nat.bess`](https://github.com/NetSys/bess/blob/master/bessctl/conf/samples/nat.bess)
+ *
+ * Forward direction (from input gate 0 to output gate 0):
+ *  - Source IP address is updated, from internal to external address.
+ * Reverse direction (from input gate 1 to output gate 1):
+ *  - Destination IP address is updated, from external to internal address.
+ * If the original address is outside any of the ranges, packets are forwarded
+ * without NAT.
+ *
+ * Note that address in packet payload (e.g., FTP) are NOT translated.
+ *
+ * __Input Gates__: 2 (0 for internal->external, and 1 for external->internal direction)
+ * __Output Gates__: 2 (same as the input gate)
+ */
+message StaticNATArg {
+  message AddressRange {
+    string start = 1; /// first IP address to use
+    string end = 2; /// last IP address to use
+  }
+
+  message AddressRangePair {
+    AddressRange int_range = 1;
+    AddressRange ext_range = 2; /// should be the same size as int_range
+  }
+
+  repeated AddressRangePair pairs = 1;
 }
 
 /**
@@ -942,9 +1000,10 @@ message SplitArg {
 }
 
 /**
- * The timestamp module takes no parameters. It inserts the current
+ * The timestamp module takes an offset parameter. It inserts the current
  * time in nanoseconds into the packet, to be used for latency measurements
- * alongside the Measure module.
+ * alongside the Measure module.  The default offset is after an IPv4 UDP
+ * header.
  *
  * __Input Gates__: 1
  * __Output Gates__: 1
@@ -975,8 +1034,11 @@ message UpdateArg {
  * The URLFilter performs TCP reconstruction over a flow and blocks
  * connections which mention a banned URL.
  *
- * __Input Gates__: 1
+ * __Input Gates__: 2
  * __Output Gates__: 2
+ *
+ * Note that the add() command takes this same argument, and the
+ * clear() command takes an empty argument.
  */
 message UrlFilterArg {
   /**
@@ -987,6 +1049,16 @@ message UrlFilterArg {
     string path = 2;  /// Path prefix, e.g. "/"
   }
   repeated Url blacklist = 1; /// A list of Urls to block.
+}
+
+/**
+ * The runtime configuration of a URLFilter is the current
+ * blacklist.  This means that getting the Arg gets an *empty*
+ * list: we assume anyone using get_initial_arg is also using
+ * get_runtime_config.
+ */
+message UrlFilterConfig {
+  repeated UrlFilterArg.Url blacklist = 1;
 }
 
 /**
@@ -1051,6 +1123,16 @@ message WildcardMatchArg {
 }
 
 /**
+ * WildcardMatchConfig represents the current runtime configuration
+ * of a WildcardMatch module, as returned by get_runtime_config and
+ * set by set_runtime_config.
+ */
+message WildcardMatchConfig {
+  uint64 default_gate = 1;
+  repeated WildcardMatchCommandAddArg rules = 2;
+}
+
+/**
  * The ARP Responder module is responding to ARP requests
  * TODO: Dynamic learn new MAC's-IP's mapping
  *
@@ -1061,8 +1143,8 @@ message ArpResponderArg {
   /**
    * One ARP IP-MAC mapping
    */
-   string ip = 1; // The IP
-   string mac_addr = 2; /// The MAC address
+  string ip = 1; // The IP
+  string mac_addr = 2; /// The MAC address
 }
 
 /**
@@ -1072,8 +1154,8 @@ message ArpResponderArg {
  * __Output Gates__: 2
  */
 message MplsPopArg {
-   bool remove_eth_header = 1; // Remove ETH header with the pop
-   uint32 next_eth_type = 2; /// The next ETH type to set
+  bool remove_eth_header = 1; // Remove ETH header with the pop
+  uint32 next_eth_type = 2; /// The next ETH type to set
 }
 
 /**

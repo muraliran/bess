@@ -60,7 +60,7 @@ static void packet_init(struct rte_mempool *mp, void *opaque_arg, void *_m,
   memset(pkt->reserve(), 0, SNBUF_RESERVE);
 
   pkt->set_vaddr(pkt);
-  pkt->set_paddr(rte_mempool_virt2phy(mp, pkt));
+  pkt->set_paddr(rte_mempool_virt2iova(pkt));
   pkt->set_sid(reinterpret_cast<uintptr_t>(opaque_arg));
   pkt->set_index(i);
 }
@@ -68,11 +68,10 @@ static void packet_init(struct rte_mempool *mp, void *opaque_arg, void *_m,
 static void init_mempool_socket(int sid) {
   struct rte_pktmbuf_pool_private pool_priv;
   char name[256];
+  int current_try = FLAGS_buffers;
 
   const int num_mempool_cache = 512;
-  const int initial_try = 262144;
   const int minimum_try = 16384;
-  int current_try = initial_try;
 
   pool_priv.mbuf_data_room_size = SNBUF_HEADROOM + SNBUF_DATA;
   pool_priv.mbuf_priv_size = SNBUF_RESERVE;
@@ -129,10 +128,6 @@ void close_mempool(void) {
   /* Do nothing. Surprisingly, there is no destructor for mempools */
 }
 
-struct rte_mempool *get_pframe_pool() {
-  return pframe_pool[ctx.socket()];
-}
-
 struct rte_mempool *get_pframe_pool_socket(int socket) {
   return pframe_pool[socket];
 }
@@ -154,10 +149,11 @@ static Packet *paddr_to_snb_memchunk(struct rte_mempool_memhdr *chunk,
   return nullptr;
 }
 
-#define check_offset(field)                                                                                                                                                                                                                                                                                                  \
-  do {                                                                                                                                                                                                                                                                                                                \
-    static_assert(offsetof(Packet, field##_) == offsetof(rte_mbuf, field), \
-      "Incompatibility detected between class Packet and struct rte_mbuf"); \
+#define check_offset(field)                                                   \
+  do {                                                                        \
+    static_assert(                                                            \
+        offsetof(Packet, field##_) == offsetof(rte_mbuf, field),              \
+        "Incompatibility detected between class Packet and struct rte_mbuf"); \
   } while (0)
 
 Packet::Packet() {

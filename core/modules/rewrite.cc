@@ -75,6 +75,7 @@ CommandResponse Rewrite::CommandAdd(const bess::pb::RewriteArg &arg) {
     size_t j = i % num_templates_;
     bess::utils::Copy(templates_[i], templates_[j], template_size_[j]);
     template_size_[i] = template_size_[j];
+    jump_[i] = j;
   }
 
   return CommandSuccess();
@@ -119,20 +120,17 @@ inline void Rewrite::DoRewrite(bess::PacketBatch *batch) {
     bess::utils::CopyInlined(ptr, templates_[start + i], size, true);
   }
 
-  next_turn_ = start + cnt;
-  if (next_turn_ >= bess::PacketBatch::kMaxBurst) {
-    next_turn_ -= bess::PacketBatch::kMaxBurst;
-  }
+  next_turn_ = jump_[start + cnt];
 }
 
-void Rewrite::ProcessBatch(bess::PacketBatch *batch) {
+void Rewrite::ProcessBatch(Context *ctx, bess::PacketBatch *batch) {
   if (num_templates_ == 1) {
     DoRewriteSingle(batch);
   } else if (num_templates_ > 1) {
     DoRewrite(batch);
   }
 
-  RunNextModule(batch);
+  RunNextModule(ctx, batch);
 }
 
 ADD_MODULE(Rewrite, "rewrite", "replaces entire packet data")

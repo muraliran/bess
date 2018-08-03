@@ -35,7 +35,10 @@
 #include <sched.h>
 #include <unistd.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -200,14 +203,14 @@ static int next_cpu;
 /* Free an allocated bar, freeing resources in the queues */
 void VPort::FreeBar() {
   int i;
-  struct sn_conf_space *conf = static_cast<struct sn_conf_space *>(bar_);
+  struct sn_conf_space *cfg = static_cast<struct sn_conf_space *>(bar_);
 
-  for (i = 0; i < conf->num_txq; i++) {
+  for (i = 0; i < cfg->num_txq; i++) {
     drain_drv_to_sn_q(inc_qs_[i].drv_to_sn);
     drain_sn_to_drv_q(inc_qs_[i].sn_to_drv);
   }
 
-  for (i = 0; i < conf->num_rxq; i++) {
+  for (i = 0; i < cfg->num_rxq; i++) {
     drain_drv_to_sn_q(inc_qs_[i].drv_to_sn);
     drain_sn_to_drv_q(inc_qs_[i].sn_to_drv);
   }
@@ -221,7 +224,7 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   int total_bytes;
 
   void *bar;
-  struct sn_conf_space *conf;
+  struct sn_conf_space *cfg;
   char *ptr;
 
   int i;
@@ -238,30 +241,30 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   bar = rte_zmalloc(nullptr, total_bytes, 64);
   DCHECK(bar);
 
-  conf = reinterpret_cast<struct sn_conf_space *>(bar);
+  cfg = reinterpret_cast<struct sn_conf_space *>(bar);
 
-  conf->bar_size = total_bytes;
-  conf->netns_fd = netns_fd_;
-  conf->container_pid = container_pid_;
+  cfg->bar_size = total_bytes;
+  cfg->netns_fd = netns_fd_;
+  cfg->container_pid = container_pid_;
 
-  strncpy(conf->ifname, ifname_, IFNAMSIZ);
+  strncpy(cfg->ifname, ifname_, IFNAMSIZ);
 
-  bess::utils::Copy(conf->mac_addr, mac_addr, ETH_ALEN);
+  bess::utils::Copy(cfg->mac_addr, conf().mac_addr.bytes, ETH_ALEN);
 
-  conf->num_txq = num_queues[PACKET_DIR_INC];
-  conf->num_rxq = num_queues[PACKET_DIR_OUT];
-  conf->link_on = 1;
-  conf->promisc_on = 1;
+  cfg->num_txq = num_queues[PACKET_DIR_INC];
+  cfg->num_rxq = num_queues[PACKET_DIR_OUT];
+  cfg->link_on = 1;
+  cfg->promisc_on = 1;
 
-  conf->txq_opts = *txq_opts;
-  conf->rxq_opts = *rxq_opts;
+  cfg->txq_opts = *txq_opts;
+  cfg->rxq_opts = *rxq_opts;
 
-  ptr = (char *)(conf);
+  ptr = (char *)(cfg);
   ptr += ROUND_TO_64(sizeof(struct sn_conf_space));
 
   /* See sn_common.h for the llring usage */
 
-  for (i = 0; i < conf->num_txq; i++) {
+  for (i = 0; i < cfg->num_txq; i++) {
     /* Driver -> BESS */
     llring_init(reinterpret_cast<struct llring *>(ptr), SLOTS_PER_LLRING,
                 SINGLE_P, SINGLE_C);
@@ -276,7 +279,7 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
     ptr += ROUND_TO_64(bytes_per_llring);
   }
 
-  for (i = 0; i < conf->num_rxq; i++) {
+  for (i = 0; i < cfg->num_rxq; i++) {
     /* RX queue registers */
     out_qs_[i].rx_regs = reinterpret_cast<struct sn_rxq_registers *>(ptr);
     ptr += ROUND_TO_64(sizeof(struct sn_rxq_registers));
@@ -329,6 +332,20 @@ void VPort::InitDriver() {
   }
 }
 
+static inline bool is_ipv6_prefix(const std::string &prefix) {
+  size_t delim_pos = prefix.find('/');
+  if (delim_pos == std::string::npos) {
+    return false;
+  }
+  int prefix_len = std::stoi(prefix.substr(delim_pos + 1));
+  if (prefix_len <= 0 || prefix_len > 128) {
+    return false;
+  }
+  struct sockaddr_in6 sa;
+  return inet_pton(AF_INET6, prefix.substr(0, delim_pos).c_str(),
+                   &(sa.sin6_addr)) != 0;
+}
+
 int VPort::SetIPAddrSingle(const std::string &ip_addr) {
   FILE *fp;
 
@@ -337,19 +354,29 @@ int VPort::SetIPAddrSingle(const std::string &ip_addr) {
   int ret;
   int exit_code;
 
-  ret = snprintf(buf, sizeof(buf), "ip addr add %s dev %s 2>&1",
-                 ip_addr.c_str(), ifname_);
+  const char *cmd = is_ipv6_prefix(ip_addr) ? "ip -6 addr add %s dev %s 2>&1"
+                                            : "ip addr add %s dev %s 2>&1";
+  ret = snprintf(buf, sizeof(buf), cmd, ip_addr.c_str(), ifname_);
+
   if (ret >= static_cast<int>(sizeof(buf)))
     return -EINVAL;
 
   fp = popen(buf, "r");
-  if (!fp)
+  if (!fp) {
+    PLOG(ERROR) << "popen()";
     return -errno;
+  }
+
+  while (fgets(buf, sizeof(buf), fp) != NULL) {
+    PLOG(INFO) << buf;
+  }
 
   ret = pclose(fp);
   exit_code = WEXITSTATUS(ret);
-  if (exit_code)
+  if (exit_code) {
+    PLOG(ERROR) << "pclose(). Exit status: " << exit_code;
     return -EINVAL;
+  }
 
   return 0;
 }
@@ -380,8 +407,9 @@ CommandResponse VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
           PLOG(ERROR) << "open(/proc/pid/ns/net)";
           _exit(errno <= 255 ? errno : ENOMSG);
         }
-      } else
+      } else {
         fd = netns_fd_;
+      }
 
       ret = setns(fd, 0);
       if (ret < 0) {
@@ -395,15 +423,15 @@ CommandResponse VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
 
   if (arg.ip_addrs_size() > 0) {
     for (int i = 0; i < arg.ip_addrs_size(); ++i) {
-      const char *addr = arg.ip_addrs(i).c_str();
-      ret = SetIPAddrSingle(addr);
+      ret = SetIPAddrSingle(arg.ip_addrs(i));
       if (ret < 0) {
         if (nspace) {
           /* it must be the child */
           DCHECK_EQ(child_pid, 0);
           _exit(errno <= 255 ? errno : ENOMSG);
-        } else
+        } else {
           break;
+        }
       }
     }
   } else {
@@ -415,8 +443,9 @@ CommandResponse VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
       if (ret < 0) {
         ret = -ret;
         _exit(ret <= 255 ? ret : ENOMSG);
-      } else
+      } else {
         _exit(0);
+      }
     } else {
       int exit_status;
 
@@ -426,8 +455,9 @@ CommandResponse VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
       if (ret >= 0) {
         DCHECK_EQ(ret, child_pid);
         ret = -WEXITSTATUS(exit_status);
-      } else
+      } else {
         PLOG(ERROR) << "waitpid()";
+      }
     }
   }
 
@@ -509,7 +539,7 @@ CommandResponse VPort::Init(const bess::pb::VPortArg &arg) {
   rxq_opts.loopback = arg.loopback();
 
   bar_ = AllocBar(&txq_opts, &rxq_opts);
-  phy_addr = rte_malloc_virt2phy(bar_);
+  phy_addr = rte_malloc_virt2iova(bar_);
 
   VLOG(1) << "virt: " << bar_ << ", phys: " << phy_addr;
 
